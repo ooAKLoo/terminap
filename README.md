@@ -1,0 +1,110 @@
+# TermiNap
+
+**Terminal agents finish. Then your Mac naps.**
+
+TermiNap is a tiny native macOS companion for terminal coding agents. It tracks every active Codex task as a battery segment and can turn off the display, put the Mac to sleep, or shut it down after the last task finishes.
+
+[简体中文](README.zh-CN.md) · [Marketing plan](MARKETING_PLAN.md) · [Product Hunt launch kit](PRODUCT_HUNT.md)
+
+> Early alpha: TermiNap currently observes terminal Codex tasks and performs the selected action after the last task ends. Preventing idle system sleep while tasks are active is the next release gate and is not implemented yet.
+
+## Why TermiNap
+
+Long-running terminal agents create an awkward power-management problem: letting macOS sleep can interrupt the work, while generic keep-awake tools do not know when the final agent has finished.
+
+TermiNap is designed around the agent lifecycle:
+
+- One active terminal task equals one battery segment.
+- Multiple Codex terminals are tracked together.
+- The last completed task starts a cancelable countdown.
+- A new task cancels the pending power action.
+- All activity and settings stay on the Mac.
+
+## Current features
+
+- Tracks terminal Codex sessions through lifecycle hooks.
+- Ignores Codex/ChatGPT desktop sessions without a TTY.
+- Shows up to eight active tasks, with a `+N` overflow indicator.
+- Supports display sleep, system sleep, and shutdown.
+- Requires an explicit confirmation before enabling shutdown.
+- Installs and merges user-level hooks without removing unrelated hooks.
+- Guides first-time users through Codex hook trust and detects `0/3` through `3/3` trust progress.
+- Keeps its floating panel fully visible across multiple displays.
+
+## Requirements
+
+- macOS 13 or newer
+- Apple Silicon
+- Codex CLI, or a Codex executable bundled with ChatGPT/Codex for macOS
+- Swift 5.9 or newer when building from source
+
+## Build and install
+
+```bash
+swift test
+./scripts/build-app.sh
+./scripts/install-app.sh
+open ~/Applications/TermiNap.app
+```
+
+The build script creates `.build/TermiNap.app`. The install script copies it to `~/Applications/TermiNap.app`.
+
+The current build is ad-hoc signed for local development. Public binary releases must use a Developer ID signature and Apple notarization.
+
+## Trust the Codex hooks
+
+On first launch, TermiNap merges three handlers into `~/.codex/hooks.json` and preserves unrelated hooks. If a hooks file already exists, it creates `~/.codex/hooks.json.before-terminap`.
+
+Codex requires the user to approve new hook definitions:
+
+1. Click **Open guided Codex** in TermiNap.
+2. Paste the `/hooks` command that TermiNap copied to the clipboard.
+3. Review and trust the three TermiNap hooks.
+
+TermiNap checks the trust state through the Codex app-server and switches to the battery view after all three hooks are accepted. It never edits Codex's private trust state or uses a trust-bypass flag.
+
+## Privacy and safety
+
+- No account is required.
+- No prompts, source code, project contents, or terminal output are collected.
+- State is stored under `~/Library/Application Support/TermiNap/`.
+- Power automation is off by default.
+- Shutdown requires a second confirmation and a cancelable countdown.
+
+For development, set `TERMINAP_DRY_RUN=1` before launching the executable. Power actions will be written to `dry-run.log` instead of being executed.
+
+## Roadmap before a public launch
+
+- Hold a macOS idle-sleep assertion only while at least one agent is working.
+- Allow display sleep while the system remains awake.
+- Release the assertion after normal exit, crashes, and stale sessions.
+- Add AC-power-only and low-battery safeguards.
+- Add launch-at-login and completion notifications.
+- Ship a Developer ID signed and notarized DMG.
+
+Closed-lid operation is deliberately out of scope until it can be implemented with a narrowly scoped, auditable privileged helper and reliable recovery behavior.
+
+## Uninstall
+
+1. Quit TermiNap.
+2. Remove `TermiNap.app`.
+3. Remove only the TermiNap command entries from `~/.codex/hooks.json`.
+4. Optionally remove `~/Library/Application Support/TermiNap/`.
+
+Do not replace the whole hooks file if it contains handlers from other tools.
+
+## Contributing
+
+Issues and pull requests are welcome. Run the test suite before submitting a change:
+
+```bash
+swift test
+```
+
+Please do not market an unfinished roadmap item as an existing feature.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+TermiNap is an independent open-source project and is not affiliated with, endorsed by, or sponsored by OpenAI.
