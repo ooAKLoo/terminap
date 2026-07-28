@@ -80,6 +80,90 @@ final class TermiNapCoreTests: XCTestCase {
         XCTAssertEqual(engine.observe(busyCount: 0, automationEnabled: true), .none)
     }
 
+    func testWakeGuardPolicyCoversWorkAndCompletionCountdown() {
+        XCTAssertTrue(
+            WakeGuardPolicy.shouldPreventIdleSleep(
+                busyCount: 2,
+                automationEnabled: true,
+                countdownActive: false
+            )
+        )
+        XCTAssertTrue(
+            WakeGuardPolicy.shouldPreventIdleSleep(
+                busyCount: 0,
+                automationEnabled: true,
+                countdownActive: true
+            )
+        )
+        XCTAssertFalse(
+            WakeGuardPolicy.shouldPreventIdleSleep(
+                busyCount: 2,
+                automationEnabled: false,
+                countdownActive: true
+            )
+        )
+        XCTAssertFalse(
+            WakeGuardPolicy.shouldPreventIdleSleep(
+                busyCount: 0,
+                automationEnabled: true,
+                countdownActive: false
+            )
+        )
+    }
+
+    func testIdleSleepAssertionIsAcquiredAndReleasedIdempotently() throws {
+        var acquiredCount = 0
+        var releasedIDs: [UInt32] = []
+        let controller = IdleSleepAssertionController(
+            acquireAssertion: {
+                acquiredCount += 1
+                return 42
+            },
+            releaseAssertion: { releasedIDs.append($0) }
+        )
+
+        try controller.setPreventingIdleSleep(true)
+        try controller.setPreventingIdleSleep(true)
+        XCTAssertTrue(controller.isPreventingIdleSleep)
+        XCTAssertEqual(acquiredCount, 1)
+
+        try controller.setPreventingIdleSleep(false)
+        try controller.setPreventingIdleSleep(false)
+        XCTAssertFalse(controller.isPreventingIdleSleep)
+        XCTAssertEqual(releasedIDs, [42])
+    }
+
+    func testIdleSleepAssertionIsReleasedWhenControllerDeinitializes() throws {
+        var releasedIDs: [UInt32] = []
+        var controller: IdleSleepAssertionController? =
+            IdleSleepAssertionController(
+                acquireAssertion: { 99 },
+                releaseAssertion: { releasedIDs.append($0) }
+            )
+
+        try controller?.setPreventingIdleSleep(true)
+        controller = nil
+
+        XCTAssertEqual(releasedIDs, [99])
+    }
+
+    func testIdleSleepAssertionFailureDoesNotReportHeldState() {
+        enum TestError: Error {
+            case failed
+        }
+        let controller = IdleSleepAssertionController(
+            acquireAssertion: { throw TestError.failed },
+            releaseAssertion: { _ in
+                XCTFail("A failed assertion must not be released")
+            }
+        )
+
+        XCTAssertThrowsError(
+            try controller.setPreventingIdleSleep(true)
+        )
+        XCTAssertFalse(controller.isPreventingIdleSleep)
+    }
+
     func testHookInstallerPreservesUnrelatedHooks() throws {
         let codexDirectory = temporaryDirectory()
         let hooksURL = codexDirectory.appendingPathComponent("hooks.json")

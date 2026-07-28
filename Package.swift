@@ -12,7 +12,10 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "TermiNapCore"
+            name: "TermiNapCore",
+            linkerSettings: [
+                .linkedFramework("IOKit"),
+            ]
         ),
         .executableTarget(
             name: "TermiNap",

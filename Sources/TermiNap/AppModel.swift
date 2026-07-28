@@ -19,10 +19,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var isCheckingHookTrust = false
     @Published private(set) var copiedHooksCommand = false
     @Published private(set) var lastError: String?
+    @Published private(set) var isPreventingIdleSleep = false
 
     private let activityStore: ActivityStore
     private let settingsStore: SettingsStore
     private let staleTaskPruner: HookProcessor
+    private let idleSleepAssertionController: IdleSleepAssertionController
     private let hookTrustChecker = CodexHookTrustChecker()
     private var decisionEngine = IdleDecisionEngine()
     private var pollTimer: Timer?
@@ -36,10 +38,13 @@ final class AppModel: ObservableObject {
 
     init(
         activityStore: ActivityStore = ActivityStore(),
-        settingsStore: SettingsStore = SettingsStore()
+        settingsStore: SettingsStore = SettingsStore(),
+        idleSleepAssertionController: IdleSleepAssertionController =
+            IdleSleepAssertionController()
     ) {
         self.activityStore = activityStore
         self.settingsStore = settingsStore
+        self.idleSleepAssertionController = idleSleepAssertionController
         staleTaskPruner = HookProcessor(store: activityStore)
         settings = (try? settingsStore.read()) ?? BatterySettings()
         refresh()
@@ -57,6 +62,7 @@ final class AppModel: ObservableObject {
         pollTimer?.invalidate()
         countdownTimer?.invalidate()
         trustPollTimer?.invalidate()
+        idleSleepAssertionController.release()
     }
 
     var busyCount: Int {
@@ -240,35 +246,48 @@ final class AppModel: ObservableObject {
     func toggleAutomation() {
         var next = settings
         next.enabled.toggle()
-        persist(next)
-        if !next.enabled {
-            cancelCountdown()
+        guard persist(next) else {
+            return
         }
+        if !settings.enabled {
+            clearCountdownState()
+        }
+        synchronizeWakeGuard()
     }
 
     func setAction(_ action: PowerAction) {
         var next = settings
         next.action = action
-        persist(next)
+        guard persist(next) else {
+            return
+        }
         if countdown != nil {
             armCountdown()
         }
     }
 
     func cancelCountdown() {
+        clearCountdownState()
+        synchronizeWakeGuard()
+    }
+
+    private func clearCountdownState() {
         countdownTimer?.invalidate()
         countdownTimer = nil
         countdownDeadline = nil
         countdown = nil
     }
 
-    private func persist(_ next: BatterySettings) {
+    @discardableResult
+    private func persist(_ next: BatterySettings) -> Bool {
         do {
             try settingsStore.write(next)
             settings = next
             lastError = nil
+            return true
         } catch {
             lastError = error.localizedDescription
+            return false
         }
     }
 
@@ -309,7 +328,7 @@ final class AppModel: ObservableObject {
     private func refresh() {
         do {
             pollCount += 1
-            if pollCount.isMultiple(of: 10) {
+            if pollCount == 1 || pollCount.isMultiple(of: 10) {
                 try staleTaskPruner.pruneStaleTasks()
             }
             let state = try activityStore.read()
@@ -322,19 +341,23 @@ final class AppModel: ObservableObject {
             case .none:
                 break
             case .cancel:
-                cancelCountdown()
+                clearCountdownState()
             case .arm:
                 armCountdown()
             }
-            lastError = nil
+            if synchronizeWakeGuard() {
+                lastError = nil
+            }
         } catch {
+            releaseWakeGuard()
             lastError = error.localizedDescription
         }
     }
 
     private func armCountdown() {
-        cancelCountdown()
+        clearCountdownState()
         guard settings.enabled, tasks.isEmpty else {
+            synchronizeWakeGuard()
             return
         }
 
@@ -342,6 +365,9 @@ final class AppModel: ObservableObject {
             TimeInterval(settings.delaySeconds)
         )
         updateCountdown()
+        guard countdownDeadline != nil else {
+            return
+        }
         countdownTimer = Timer.scheduledTimer(
             withTimeInterval: 0.25,
             repeats: true
@@ -350,11 +376,13 @@ final class AppModel: ObservableObject {
                 self?.updateCountdown()
             }
         }
+        synchronizeWakeGuard()
     }
 
     private func updateCountdown() {
         guard let deadline = countdownDeadline else {
-            cancelCountdown()
+            clearCountdownState()
+            synchronizeWakeGuard()
             return
         }
         let remaining = max(Int(ceil(deadline.timeIntervalSinceNow)), 0)
@@ -364,7 +392,8 @@ final class AppModel: ObservableObject {
             return
         }
 
-        cancelCountdown()
+        clearCountdownState()
+        synchronizeWakeGuard()
         guard settings.enabled, tasks.isEmpty else {
             return
         }
@@ -373,5 +402,32 @@ final class AppModel: ObservableObject {
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    @discardableResult
+    private func synchronizeWakeGuard() -> Bool {
+        let shouldPrevent = WakeGuardPolicy.shouldPreventIdleSleep(
+            busyCount: tasks.count,
+            automationEnabled: settings.enabled,
+            countdownActive: countdown != nil
+        )
+
+        do {
+            try idleSleepAssertionController.setPreventingIdleSleep(
+                shouldPrevent
+            )
+            isPreventingIdleSleep =
+                idleSleepAssertionController.isPreventingIdleSleep
+            return true
+        } catch {
+            releaseWakeGuard()
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    private func releaseWakeGuard() {
+        idleSleepAssertionController.release()
+        isPreventingIdleSleep = false
     }
 }

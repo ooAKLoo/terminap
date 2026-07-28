@@ -1,6 +1,6 @@
 # TermiNap Product Hunt launch kit
 
-Do not submit TermiNap to Product Hunt until every P0 item in [MARKETING_PLAN.md](MARKETING_PLAN.md) is complete. In particular, the product must keep the system awake while agents work, fail safely, and ship as a signed and notarized download.
+Do not submit TermiNap to Product Hunt until every P0 item in [MARKETING_PLAN.md](MARKETING_PLAN.md) is complete. The wake guard and fail-safe cleanup are implemented; battery safeguards plus a Developer ID signed and notarized download are still required.
 
 ## Listing
 

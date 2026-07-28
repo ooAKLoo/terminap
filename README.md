@@ -6,7 +6,7 @@ TermiNap is a tiny native macOS companion for terminal coding agents. It tracks 
 
 [简体中文](README.zh-CN.md) · [Marketing plan](MARKETING_PLAN.md) · [Product Hunt launch kit](PRODUCT_HUNT.md)
 
-> Early alpha: TermiNap currently observes terminal Codex tasks and performs the selected action after the last task ends. Preventing idle system sleep while tasks are active is the next release gate and is not implemented yet.
+> Development preview: the agent-to-sleep loop is implemented. Public binary releases still need battery safeguards, Developer ID signing, and Apple notarization.
 
 ## Why TermiNap
 
@@ -16,6 +16,7 @@ TermiNap is designed around the agent lifecycle:
 
 - One active terminal task equals one battery segment.
 - Multiple Codex terminals are tracked together.
+- While at least one tracked task is active, macOS stays awake but the display may turn off normally.
 - The last completed task starts a cancelable countdown.
 - A new task cancels the pending power action.
 - All activity and settings stay on the Mac.
@@ -25,6 +26,9 @@ TermiNap is designed around the agent lifecycle:
 - Tracks terminal Codex sessions through lifecycle hooks.
 - Ignores Codex/ChatGPT desktop sessions without a TTY.
 - Shows up to eight active tasks, with a `+N` overflow indicator.
+- Uses a process-scoped macOS assertion to prevent only user-idle system sleep while agents work.
+- Keeps the assertion through the completion countdown, then releases it before the selected power action.
+- Releases the assertion on disable, state-read failure, stale sessions, normal exit, and process termination.
 - Supports display sleep, system sleep, and shutdown.
 - Requires an explicit confirmation before enabling shutdown.
 - Installs and merges user-level hooks without removing unrelated hooks.
@@ -69,15 +73,14 @@ TermiNap checks the trust state through the Codex app-server and switches to the
 - No prompts, source code, project contents, or terminal output are collected.
 - State is stored under `~/Library/Application Support/TermiNap/`.
 - Power automation is off by default.
+- The wake guard uses `PreventUserIdleSystemSleep`; it does not hold a display-sleep assertion.
+- The assertion belongs to the TermiNap process, so macOS removes it if the app crashes or is killed.
 - Shutdown requires a second confirmation and a cancelable countdown.
 
 For development, set `TERMINAP_DRY_RUN=1` before launching the executable. Power actions will be written to `dry-run.log` instead of being executed.
 
 ## Roadmap before a public launch
 
-- Hold a macOS idle-sleep assertion only while at least one agent is working.
-- Allow display sleep while the system remains awake.
-- Release the assertion after normal exit, crashes, and stale sessions.
 - Add AC-power-only and low-battery safeguards.
 - Add launch-at-login and completion notifications.
 - Ship a Developer ID signed and notarized DMG.

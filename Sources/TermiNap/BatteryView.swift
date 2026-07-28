@@ -289,8 +289,16 @@ struct BatteryView: View {
     }
 
     private var detailText: String {
+        if model.isPreventingIdleSleep {
+            if model.busyCount == 0 {
+                return "收尾倒计时中 · Mac 保持唤醒"
+            }
+            return "Mac 保持唤醒 · 屏幕仍可自动熄灭"
+        }
         if model.busyCount == 0 {
-            return model.settings.enabled ? "等待下一批任务" : "自动动作目前关闭"
+            return model.settings.enabled
+                ? "夜班守护已开启 · 等待下一批任务"
+                : "Agent 夜班守护目前关闭"
         }
         if model.busyCount > 8 {
             return "电量条显示前 8 个，另有 \(model.busyCount - 8) 个"
@@ -345,7 +353,7 @@ struct BatteryView: View {
             HStack(spacing: 9) {
                 Image(systemName: model.settings.enabled ? "power.circle.fill" : "power.circle")
                     .font(.system(size: 16, weight: .semibold))
-                Text(model.settings.enabled ? "完成后自动\(model.settings.action.title)" : "打开完成后自动动作")
+                Text(model.settings.enabled ? "Agent 夜班守护已开启" : "打开 Agent 夜班守护")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                 Spacer()
                 Text(model.settings.enabled ? "ON" : "OFF")
@@ -365,7 +373,7 @@ struct BatteryView: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(model.settings.enabled ? "关闭自动动作" : "打开自动动作")
+        .accessibilityLabel(model.settings.enabled ? "关闭 Agent 夜班守护" : "打开 Agent 夜班守护")
     }
 }
 
