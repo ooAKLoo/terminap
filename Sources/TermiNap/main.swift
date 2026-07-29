@@ -49,12 +49,15 @@ if CommandLine.arguments.dropFirst().first == "--render-preview" {
     }
     let outputURL = URL(fileURLWithPath: CommandLine.arguments[2])
     let enabled = CommandLine.arguments[4] == "true"
+    let expanded = CommandLine.arguments.count < 6
+        || CommandLine.arguments[5] != "collapsed"
     let status: Int32 = MainActor.assumeIsolated {
         do {
             try renderPreview(
                 to: outputURL,
                 activeCount: max(activeCount, 0),
-                enabled: enabled
+                enabled: enabled,
+                expanded: expanded
             )
             return 0
         } catch {

@@ -309,6 +309,23 @@ final class TermiNapCoreTests: XCTestCase {
         XCTAssertEqual(origin.y, 657)
     }
 
+    func testPanelResizeKeepsItsTopEdgeFixed() {
+        let frame = CGRect(x: 1396, y: 943, width: 300, height: 104)
+
+        let expanded = PanelPlacement.resizedFrameKeepingTopEdge(
+            frame,
+            targetHeight: 360
+        )
+        let collapsed = PanelPlacement.resizedFrameKeepingTopEdge(
+            expanded,
+            targetHeight: 104
+        )
+
+        XCTAssertEqual(expanded, CGRect(x: 1396, y: 687, width: 300, height: 360))
+        XCTAssertEqual(collapsed, frame)
+        XCTAssertEqual(expanded.maxY, frame.maxY)
+    }
+
     private func hook(command: String, status: String) -> [String: Any] {
         [
             "enabled": true,

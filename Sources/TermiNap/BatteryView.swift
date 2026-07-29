@@ -11,29 +11,198 @@ private enum Palette {
     static let warning = Color(red: 1.00, green: 0.76, blue: 0.32)
 }
 
+@MainActor
+final class PanelPresentationState: ObservableObject {
+    @Published private(set) var isContentExpanded: Bool
+    @Published private(set) var isPanelExpanded: Bool
+
+    private var pointerIsInside = false
+    private var interactionIsLocked = false
+    private var pendingCollapse: Task<Void, Never>?
+
+    init(initiallyExpanded: Bool = false) {
+        isContentExpanded = initiallyExpanded
+        isPanelExpanded = initiallyExpanded
+    }
+
+    func setPointerInside(_ isInside: Bool) {
+        pointerIsInside = isInside
+        if isInside {
+            expand()
+        } else {
+            scheduleCollapse()
+        }
+    }
+
+    func setInteractionLocked(_ isLocked: Bool) {
+        interactionIsLocked = isLocked
+        if isLocked {
+            pendingCollapse?.cancel()
+            pendingCollapse = nil
+            expand()
+        } else if !pointerIsInside {
+            scheduleCollapse()
+        }
+    }
+
+    func panelAnimationDidComplete() {
+        if !isPanelExpanded {
+            isContentExpanded = false
+        }
+    }
+
+    private func expand() {
+        pendingCollapse?.cancel()
+        pendingCollapse = nil
+
+        isContentExpanded = true
+        isPanelExpanded = true
+    }
+
+    private func scheduleCollapse() {
+        guard !interactionIsLocked else {
+            return
+        }
+        pendingCollapse?.cancel()
+        pendingCollapse = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard
+                !Task.isCancelled,
+                !pointerIsInside,
+                !interactionIsLocked
+            else {
+                return
+            }
+            collapse()
+        }
+    }
+
+    private func collapse() {
+        guard isPanelExpanded else {
+            return
+        }
+        isPanelExpanded = false
+    }
+}
+
 struct BatteryView: View {
+    static let panelWidth: CGFloat = 300
+    static let collapsedHeight: CGFloat = 104
+    static let dashboardExpandedHeight: CGFloat = 330
+    static let setupExpandedHeight: CGFloat = 490
+
     @ObservedObject var model: AppModel
+    @ObservedObject var presentation: PanelPresentationState
     @State private var confirmingShutdown = false
 
+    private let onPreferredHeightChange: (CGFloat) -> Void
+
+    init(
+        model: AppModel,
+        presentation: PanelPresentationState,
+        onPreferredHeightChange: @escaping (CGFloat) -> Void = { _ in }
+    ) {
+        self.model = model
+        self.presentation = presentation
+        self.onPreferredHeightChange = onPreferredHeightChange
+    }
+
     var body: some View {
-        VStack(spacing: 16) {
-            header
-            if model.shouldShowHookSetup {
-                hookSetup
-            } else {
-                dashboard
+        GeometryReader { geometry in
+            let progress = morphProgress(
+                currentHeight: geometry.size.height
+            )
+            let cornerRadius = 30 - (6 * progress)
+            let detailProgress = normalizedProgress(
+                progress,
+                start: 0.10,
+                end: 0.62
+            )
+            let footerProgress = normalizedProgress(
+                progress,
+                start: 0.56,
+                end: 0.94
+            )
+            let shape = RoundedRectangle(
+                cornerRadius: cornerRadius,
+                style: .continuous
+            )
+
+            ZStack(alignment: .top) {
+                shape.fill(Palette.panel)
+
+                VStack(
+                    spacing: presentation.isContentExpanded ? 16 : 0
+                ) {
+                    BatteryMeter(activeCount: model.busyCount)
+
+                    if presentation.isContentExpanded {
+                        Group {
+                            if model.shouldShowHookSetup {
+                                hookSetup
+                            } else {
+                                dashboard
+                            }
+                        }
+                        .opacity(Double(detailProgress))
+                        .offset(y: 7 * (1 - detailProgress))
+
+                        Spacer(minLength: 0)
+
+                        header
+                            .opacity(Double(footerProgress))
+                            .offset(y: 4 * (1 - footerProgress))
+                    }
+                }
+                .padding(18)
+                .frame(
+                    width: Self.panelWidth,
+                    height: preferredHeight,
+                    alignment: .top
+                )
             }
+            .clipShape(shape)
+            .overlay(
+                shape.stroke(
+                    Palette.border.opacity(0.78 + (0.22 * progress)),
+                    lineWidth: 1
+                )
+            )
+            .contentShape(shape)
         }
-        .padding(18)
-        .frame(width: 300)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(Palette.panel)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Palette.border, lineWidth: 1)
-        )
+        .frame(width: Self.panelWidth)
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSMenu.didBeginTrackingNotification
+            )
+        ) { _ in
+            presentation.setInteractionLocked(true)
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSMenu.didEndTrackingNotification
+            )
+        ) { _ in
+            presentation.setInteractionLocked(false)
+        }
+        .onChange(of: presentation.isPanelExpanded) { isExpanded in
+            onPreferredHeightChange(
+                isExpanded ? expandedHeight : Self.collapsedHeight
+            )
+        }
+        .onChange(of: model.shouldShowHookSetup) { shouldShowSetup in
+            guard presentation.isPanelExpanded else {
+                return
+            }
+            onPreferredHeightChange(
+                shouldShowSetup
+                    ? Self.setupExpandedHeight
+                    : Self.dashboardExpandedHeight
+            )
+        }
+        .onChange(of: confirmingShutdown) { isConfirming in
+            presentation.setInteractionLocked(isConfirming)
+        }
         .alert("确认允许自动关机？", isPresented: $confirmingShutdown) {
             Button("取消", role: .cancel) {}
             Button("允许关机", role: .destructive) {
@@ -43,6 +212,38 @@ struct BatteryView: View {
             Text("所有终端 Codex 任务完成后，应用会在倒计时结束时关闭电脑。请先保存其他应用中的工作。")
         }
         .environment(\.colorScheme, .dark)
+    }
+
+    private var preferredHeight: CGFloat {
+        guard presentation.isContentExpanded else {
+            return Self.collapsedHeight
+        }
+        return expandedHeight
+    }
+
+    private var expandedHeight: CGFloat {
+        model.shouldShowHookSetup
+            ? Self.setupExpandedHeight
+            : Self.dashboardExpandedHeight
+    }
+
+    private func morphProgress(currentHeight: CGFloat) -> CGFloat {
+        let range = max(expandedHeight - Self.collapsedHeight, 1)
+        return min(
+            max(
+                (currentHeight - Self.collapsedHeight) / range,
+                0
+            ),
+            1
+        )
+    }
+
+    private func normalizedProgress(
+        _ progress: CGFloat,
+        start: CGFloat,
+        end: CGFloat
+    ) -> CGFloat {
+        min(max((progress - start) / max(end - start, 0.001), 0), 1)
     }
 
     private var header: some View {
@@ -93,8 +294,6 @@ struct BatteryView: View {
 
     private var dashboard: some View {
         VStack(spacing: 16) {
-            BatteryMeter(activeCount: model.busyCount)
-
             VStack(spacing: 4) {
                 Text(model.statusText)
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
@@ -453,5 +652,60 @@ private struct BatteryMeter: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(activeCount) 个 Codex 任务正在进行")
+        .overlay {
+            WindowDragHandle()
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+private struct WindowDragHandle: NSViewRepresentable {
+    func makeNSView(context: Context) -> DragHandleView {
+        DragHandleView()
+    }
+
+    func updateNSView(_ nsView: DragHandleView, context: Context) {}
+}
+
+private final class DragHandleView: NSView {
+    private var lastMouseLocation: NSPoint?
+
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        lastMouseLocation = NSEvent.mouseLocation
+        NSCursor.closedHand.set()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let window, let lastMouseLocation else {
+            return
+        }
+        let mouseLocation = NSEvent.mouseLocation
+        let delta = NSPoint(
+            x: mouseLocation.x - lastMouseLocation.x,
+            y: mouseLocation.y - lastMouseLocation.y
+        )
+        let origin = window.frame.origin
+        window.setFrameOrigin(
+            NSPoint(
+                x: origin.x + delta.x,
+                y: origin.y + delta.y
+            )
+        )
+        self.lastMouseLocation = mouseLocation
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        lastMouseLocation = nil
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .openHand)
     }
 }

@@ -2,6 +2,19 @@ import CoreGraphics
 import Foundation
 
 public enum PanelPlacement {
+    public static func resizedFrameKeepingTopEdge(
+        _ frame: CGRect,
+        targetHeight: CGFloat
+    ) -> CGRect {
+        let height = max(targetHeight, 0)
+        return CGRect(
+            x: frame.minX,
+            y: frame.maxY - height,
+            width: frame.width,
+            height: height
+        )
+    }
+
     public static func topTrailingOrigin(
         panelSize: CGSize,
         visibleFrame: CGRect,

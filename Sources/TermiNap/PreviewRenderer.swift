@@ -3,7 +3,12 @@ import TermiNapCore
 import SwiftUI
 
 @MainActor
-func renderPreview(to outputURL: URL, activeCount: Int, enabled: Bool) throws {
+func renderPreview(
+    to outputURL: URL,
+    activeCount: Int,
+    enabled: Bool,
+    expanded: Bool = true
+) throws {
     _ = NSApplication.shared
     let previewDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent("TermiNapPreview-\(UUID().uuidString)", isDirectory: true)
@@ -40,11 +45,22 @@ func renderPreview(to outputURL: URL, activeCount: Int, enabled: Bool) throws {
     )
     model.setHookInstalled(true)
 
-    let hostingView = NSHostingView(rootView: BatteryView(model: model))
-    let fittingSize = hostingView.fittingSize
+    let hostingView = NSHostingView(
+        rootView: BatteryView(
+            model: model,
+            presentation: PanelPresentationState(
+                initiallyExpanded: expanded
+            )
+        )
+    )
     hostingView.frame = NSRect(
         origin: .zero,
-        size: NSSize(width: max(fittingSize.width, 300), height: max(fittingSize.height, 330))
+        size: NSSize(
+            width: BatteryView.panelWidth,
+            height: expanded
+                ? BatteryView.dashboardExpandedHeight
+                : BatteryView.collapsedHeight
+        )
     )
     hostingView.layoutSubtreeIfNeeded()
 
@@ -73,11 +89,20 @@ func renderSetupPreview(to outputURL: URL, trustedCount: Int) throws {
     )
     model.setHookTrustForPreview(trustedCount: min(max(trustedCount, 0), 3))
 
-    let hostingView = NSHostingView(rootView: BatteryView(model: model))
-    let fittingSize = hostingView.fittingSize
+    let hostingView = NSHostingView(
+        rootView: BatteryView(
+            model: model,
+            presentation: PanelPresentationState(
+                initiallyExpanded: true
+            )
+        )
+    )
     hostingView.frame = NSRect(
         origin: .zero,
-        size: NSSize(width: max(fittingSize.width, 300), height: max(fittingSize.height, 390))
+        size: NSSize(
+            width: BatteryView.panelWidth,
+            height: BatteryView.setupExpandedHeight
+        )
     )
     hostingView.layoutSubtreeIfNeeded()
 
