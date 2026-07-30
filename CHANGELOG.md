@@ -10,15 +10,22 @@ All notable changes to TermiNap will be documented in this file.
 - Wake protection through the completion countdown without blocking normal display sleep.
 - In-app wake-guard status and clearer night-shift automation language.
 - Fail-safe assertion cleanup on disabled automation, state errors, stale sessions, and process exit.
+- Explicit running and waiting-for-permission task states.
+- Five-event Codex lifecycle coverage, including `PermissionRequest` and `PostToolUse`.
+- Product state and power-decision reference documentation.
 
 ### Fixed
 
 - Restore the floating panel to its previous external display and relative position after display topology changes.
 - Expand upward near the screen's bottom edge while keeping the battery meter fixed and revealing content from bottom to top.
+- Treat tasks blocked on user permission as paused progress instead of keeping the Mac awake indefinitely.
+- Restore task tracking after an approved tool returns.
+- Migrate the completion grace period from 15 to 30 seconds.
+- Keep a live Codex process tracked beyond the 24-hour stale-state fallback.
 
 ### Verified
 
-- Unit coverage for wake policy, idempotent acquisition, error handling, and deinitialization cleanup.
+- Unit coverage for wake policy, permission pause/resume, settings migration, hook installation, idempotent acquisition, error handling, and deinitialization cleanup.
 - Live macOS `pmset -g assertions` verification confirms display sleep remains unblocked and the TermiNap assertion disappears after process termination.
 
 ## 0.1.0 — 2026-07-29

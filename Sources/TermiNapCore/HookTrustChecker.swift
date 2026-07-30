@@ -13,7 +13,13 @@ public enum CodexHookTrustStatus: String, Sendable {
 }
 
 public struct CodexHookTrustReport: Equatable, Sendable {
-    public static let requiredKinds = ["start", "stop", "end"]
+    public static let requiredKinds = [
+        "start",
+        "permission",
+        "resume",
+        "stop",
+        "end",
+    ]
 
     public let statuses: [String: CodexHookTrustStatus]
 

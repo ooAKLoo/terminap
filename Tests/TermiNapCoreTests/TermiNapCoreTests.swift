@@ -71,6 +71,86 @@ final class TermiNapCoreTests: XCTestCase {
         XCTAssertEqual(try store.read().busy["a"]?.turnID, "new-turn")
     }
 
+    func testPermissionWaitStopsProgressUntilPostToolUseResumes() throws {
+        let store = ActivityStore(baseDirectory: temporaryDirectory())
+        let context = CodexProcessContext(pid: 1234, tty: "ttys001")
+        let processor = HookProcessor(
+            store: store,
+            terminalContext: { context },
+            processIsAlive: { _ in true }
+        )
+        let event = HookEvent(
+            sessionID: "a",
+            turnID: "turn-a",
+            cwd: "/a"
+        )
+
+        try processor.handle(.start, event: event)
+        try processor.handle(.permission, event: event)
+
+        var state = try store.read()
+        XCTAssertTrue(state.busy.isEmpty)
+        XCTAssertEqual(
+            state.waitingForPermission["a"]?.progress,
+            .waitingForPermission
+        )
+
+        try processor.handle(.resume, event: event)
+
+        state = try store.read()
+        XCTAssertEqual(state.busy["a"]?.progress, .running)
+        XCTAssertTrue(state.waitingForPermission.isEmpty)
+    }
+
+    func testStopRemovesTaskAlreadyWaitingForPermission() throws {
+        let store = ActivityStore(baseDirectory: temporaryDirectory())
+        let processor = HookProcessor(
+            store: store,
+            terminalContext: {
+                CodexProcessContext(pid: 1234, tty: "ttys001")
+            },
+            processIsAlive: { _ in true }
+        )
+        let event = HookEvent(
+            sessionID: "a",
+            turnID: "turn-a",
+            cwd: "/a"
+        )
+
+        try processor.handle(.start, event: event)
+        try processor.handle(.permission, event: event)
+        try processor.handle(.stop, event: event)
+
+        XCTAssertTrue(try store.read().tracked.isEmpty)
+    }
+
+    func testLiveProcessIsNotExpiredByWallClockAge() throws {
+        let store = ActivityStore(baseDirectory: temporaryDirectory())
+        var now = Date(timeIntervalSince1970: 1_000)
+        let processor = HookProcessor(
+            store: store,
+            now: { now },
+            terminalContext: {
+                CodexProcessContext(pid: 1234, tty: "ttys001")
+            },
+            processIsAlive: { _ in true },
+            maximumBusyAge: 60
+        )
+
+        try processor.handle(
+            .start,
+            event: HookEvent(
+                sessionID: "a",
+                turnID: "turn-a",
+                cwd: "/a"
+            )
+        )
+        now = now.addingTimeInterval(61)
+        try processor.pruneStaleTasks()
+
+        XCTAssertNotNil(try store.read().busy["a"])
+    }
+
     func testIdleDecisionOnlyArmsOnBusyToZeroTransition() {
         var engine = IdleDecisionEngine()
         XCTAssertEqual(engine.observe(busyCount: 0, automationEnabled: true), .none)
@@ -174,6 +254,9 @@ final class TermiNapCoreTests: XCTestCase {
                     "hooks": [[
                         "type": "command",
                         "command": "/usr/bin/python3 /tmp/existing.py",
+                    ], [
+                        "type": "command",
+                        "command": "'/Applications/Old TermiNap.app/Contents/MacOS/TermiNap' --hook stop",
                     ]],
                 ]],
             ],
@@ -200,6 +283,26 @@ final class TermiNapCoreTests: XCTestCase {
             return handlers.compactMap { $0["command"] as? String }
         }
         XCTAssertTrue(commands.contains("/usr/bin/python3 /tmp/existing.py"))
+        XCTAssertFalse(commands.contains(where: { $0.contains("Old TermiNap.app") }))
+
+        let expectedCommands = [
+            "UserPromptSubmit": "--hook start",
+            "PermissionRequest": "--hook permission",
+            "PostToolUse": "--hook resume",
+            "Stop": "--hook stop",
+            "SessionEnd": "--hook end",
+        ]
+        for (eventName, commandSuffix) in expectedCommands {
+            let groups = hooks[eventName] as! [[String: Any]]
+            let eventCommands = groups.flatMap { group -> [String] in
+                let handlers = group["hooks"] as? [[String: Any]] ?? []
+                return handlers.compactMap { $0["command"] as? String }
+            }
+            XCTAssertTrue(
+                eventCommands.contains(where: { $0.contains(commandSuffix) }),
+                "\(eventName) should install \(commandSuffix)"
+            )
+        }
     }
 
     func testParsesTermiNapHookTrustStatus() throws {
@@ -243,7 +346,7 @@ final class TermiNapCoreTests: XCTestCase {
         XCTAssertFalse(report.isFullyTrusted)
     }
 
-    func testReportsAllThreeAcceptedHooksAsReady() throws {
+    func testReportsAllRequiredHooksAsReady() throws {
         let executablePath = "/Applications/TermiNap.app/Contents/MacOS/TermiNap"
         let hooks = CodexHookTrustReport.requiredKinds.map {
             hook(
@@ -263,7 +366,42 @@ final class TermiNapCoreTests: XCTestCase {
         )
 
         XCTAssertTrue(report.isFullyTrusted)
-        XCTAssertEqual(report.trustedCount, 3)
+        XCTAssertEqual(
+            report.trustedCount,
+            CodexHookTrustReport.requiredKinds.count
+        )
+    }
+
+    func testMigratesLegacyFifteenSecondCountdownToThirtySeconds() throws {
+        let data = Data(
+            #"{"enabled":true,"action":"systemSleep","delaySeconds":15}"#.utf8
+        )
+
+        let settings = try JSONDecoder().decode(BatterySettings.self, from: data)
+
+        XCTAssertEqual(settings.delaySeconds, 30)
+    }
+
+    func testKeepsExplicitCurrentSchemaCountdown() throws {
+        let data = Data(
+            #"{"schemaVersion":2,"enabled":true,"action":"systemSleep","delaySeconds":15}"#.utf8
+        )
+
+        let settings = try JSONDecoder().decode(BatterySettings.self, from: data)
+
+        XCTAssertEqual(settings.delaySeconds, 15)
+    }
+
+    func testLegacyTaskStateDefaultsToRunning() throws {
+        let data = Data(
+            #"{"sessionID":"a","turnID":"turn-a","cwd":"/a","startedAt":"1970-01-01T00:00:00Z","codexPID":1234}"#.utf8
+        )
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let task = try decoder.decode(CodexTask.self, from: data)
+
+        XCTAssertEqual(task.progress, .running)
     }
 
     func testPanelPlacementStaysInsideDisplayWithNegativeCoordinates() {

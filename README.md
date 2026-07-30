@@ -4,7 +4,7 @@
 
 TermiNap is a tiny native macOS companion for terminal coding agents. It tracks every active Codex task as a battery segment and can turn off the display, put the Mac to sleep, or shut it down after the last task finishes.
 
-[简体中文](README.zh-CN.md) · [Marketing plan](MARKETING_PLAN.md) · [Product Hunt launch kit](PRODUCT_HUNT.md)
+[简体中文](README.zh-CN.md) · [Product state and power logic](docs/PRODUCT_STATE_LOGIC.md) · [Marketing plan](MARKETING_PLAN.md) · [Product Hunt launch kit](PRODUCT_HUNT.md)
 
 > Development preview: the agent-to-sleep loop is implemented. Public binary releases still need battery safeguards, Developer ID signing, and Apple notarization.
 
@@ -17,13 +17,14 @@ TermiNap is designed around the agent lifecycle:
 - One active terminal task equals one battery segment.
 - Multiple Codex terminals are tracked together.
 - While at least one tracked task is active, macOS stays awake but the display may turn off normally.
+- A Codex permission wait is treated as paused progress instead of an active task.
 - The last completed task starts a cancelable countdown.
 - A new task cancels the pending power action.
 - All activity and settings stay on the Mac.
 
 ## Current features
 
-- Tracks terminal Codex sessions through lifecycle hooks.
+- Tracks terminal Codex running, permission-wait, resume, and completion states through five lifecycle hooks.
 - Ignores Codex/ChatGPT desktop sessions without a TTY.
 - Shows up to eight active tasks, with a `+N` overflow indicator.
 - Uses a process-scoped macOS assertion to prevent only user-idle system sleep while agents work.
@@ -32,7 +33,7 @@ TermiNap is designed around the agent lifecycle:
 - Supports display sleep, system sleep, and shutdown.
 - Requires an explicit confirmation before enabling shutdown.
 - Installs and merges user-level hooks without removing unrelated hooks.
-- Guides first-time users through Codex hook trust and detects `0/3` through `3/3` trust progress.
+- Guides first-time users through Codex hook trust and detects `0/5` through `5/5` trust progress.
 - Keeps its floating panel fully visible across multiple displays.
 
 ## Requirements
@@ -57,15 +58,15 @@ The current build is ad-hoc signed for local development. Public binary releases
 
 ## Trust the Codex hooks
 
-On first launch, TermiNap merges three handlers into `~/.codex/hooks.json` and preserves unrelated hooks. If a hooks file already exists, it creates `~/.codex/hooks.json.before-terminap`.
+On first launch, TermiNap merges five handlers into `~/.codex/hooks.json` and preserves unrelated hooks. If a hooks file already exists, it creates `~/.codex/hooks.json.before-terminap`.
 
 Codex requires the user to approve new hook definitions:
 
 1. Click **Open guided Codex** in TermiNap.
 2. Paste the `/hooks` command that TermiNap copied to the clipboard.
-3. Review and trust the three TermiNap hooks.
+3. Review and trust the five TermiNap hooks.
 
-TermiNap checks the trust state through the Codex app-server and switches to the battery view after all three hooks are accepted. It never edits Codex's private trust state or uses a trust-bypass flag.
+TermiNap checks the trust state through the Codex app-server and switches to the battery view after all five hooks are accepted. It never edits Codex's private trust state or uses a trust-bypass flag.
 
 ## Privacy and safety
 
@@ -83,6 +84,7 @@ For development, set `TERMINAP_DRY_RUN=1` before launching the executable. Power
 
 - Add AC-power-only and low-battery safeguards.
 - Add launch-at-login and completion notifications.
+- Add an instant-message notification when a task waits for permission.
 - Ship a Developer ID signed and notarized DMG.
 
 Closed-lid operation is deliberately out of scope until it can be implemented with a narrowly scoped, auditable privileged helper and reliable recovery behavior.

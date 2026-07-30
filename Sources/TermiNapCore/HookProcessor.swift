@@ -3,6 +3,8 @@ import Foundation
 
 public enum HookKind: String {
     case start
+    case permission
+    case resume
     case stop
     case end
 }
@@ -131,6 +133,10 @@ public final class HookProcessor {
         switch kind {
         case .start:
             try handleStart(event)
+        case .permission:
+            try handlePermissionRequest(event)
+        case .resume:
+            try handleResume(event)
         case .stop:
             try handleStop(event)
         case .end:
@@ -140,9 +146,9 @@ public final class HookProcessor {
 
     public func pruneStaleTasks() throws {
         try store.mutate { state in
-            let countBefore = state.busy.count
+            let countBefore = state.tracked.count
             prune(&state)
-            if state.busy.count != countBefore {
+            if state.tracked.count != countBefore {
                 state.lastCompletedAt = now()
                 state.revision &+= 1
             }
@@ -160,12 +166,69 @@ public final class HookProcessor {
 
         try store.mutate { state in
             prune(&state)
-            state.busy[sessionID] = CodexTask(
+            state.tracked[sessionID] = CodexTask(
                 sessionID: sessionID,
                 turnID: turnID,
                 cwd: event.cwd,
                 startedAt: now(),
                 codexPID: context.pid
+            )
+            state.revision &+= 1
+        }
+    }
+
+    private func handlePermissionRequest(_ event: HookEvent) throws {
+        guard let sessionID = event.sessionID else {
+            return
+        }
+
+        try store.mutate { state in
+            prune(&state)
+            guard
+                let existing = state.tracked[sessionID],
+                existing.progress == .running
+            else {
+                return
+            }
+            if let turnID = event.turnID, existing.turnID != turnID {
+                return
+            }
+            state.tracked[sessionID] = CodexTask(
+                sessionID: existing.sessionID,
+                turnID: existing.turnID,
+                cwd: event.cwd ?? existing.cwd,
+                startedAt: existing.startedAt,
+                codexPID: existing.codexPID,
+                progress: .waitingForPermission
+            )
+            state.revision &+= 1
+        }
+    }
+
+    private func handleResume(_ event: HookEvent) throws {
+        guard let sessionID = event.sessionID else {
+            return
+        }
+
+        try store.mutate { state in
+            prune(&state)
+            guard
+                let existing = state.tracked[sessionID],
+                existing.progress == .waitingForPermission
+            else {
+                return
+            }
+            if let turnID = event.turnID, existing.turnID != turnID {
+                return
+            }
+            let context = terminalContext()
+            state.tracked[sessionID] = CodexTask(
+                sessionID: existing.sessionID,
+                turnID: existing.turnID,
+                cwd: event.cwd ?? existing.cwd,
+                startedAt: now(),
+                codexPID: context?.pid ?? existing.codexPID,
+                progress: .running
             )
             state.revision &+= 1
         }
@@ -178,13 +241,13 @@ public final class HookProcessor {
 
         try store.mutate { state in
             prune(&state)
-            guard let existing = state.busy[sessionID] else {
+            guard let existing = state.tracked[sessionID] else {
                 return
             }
             if let turnID = event.turnID, existing.turnID != turnID {
                 return
             }
-            state.busy.removeValue(forKey: sessionID)
+            state.tracked.removeValue(forKey: sessionID)
             state.lastCompletedAt = now()
             state.revision &+= 1
         }
@@ -197,7 +260,7 @@ public final class HookProcessor {
 
         try store.mutate { state in
             prune(&state)
-            guard state.busy.removeValue(forKey: sessionID) != nil else {
+            guard state.tracked.removeValue(forKey: sessionID) != nil else {
                 return
             }
             state.lastCompletedAt = now()
@@ -207,11 +270,12 @@ public final class HookProcessor {
 
     private func prune(_ state: inout ActivityState) {
         let currentDate = now()
-        for (sessionID, task) in state.busy {
-            let expired = currentDate.timeIntervalSince(task.startedAt) > maximumBusyAge
+        for (sessionID, task) in state.tracked {
+            let expiredWithoutPID = task.codexPID == nil
+                && currentDate.timeIntervalSince(task.startedAt) > maximumBusyAge
             let dead = task.codexPID.map { !processIsAlive($0) } ?? false
-            if expired || dead {
-                state.busy.removeValue(forKey: sessionID)
+            if expiredWithoutPID || dead {
+                state.tracked.removeValue(forKey: sessionID)
             }
         }
     }

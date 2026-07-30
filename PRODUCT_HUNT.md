@@ -14,7 +14,7 @@ Let terminal agents finish before your Mac takes a nap.
 
 **Short description**
 
-TermiNap is a native macOS power companion for terminal coding agents. It keeps the system awake while Codex works, shows every active task as a battery segment, and lets the Mac sleep after the final agent finishes.
+TermiNap is a native macOS power companion for terminal coding agents. It keeps the system awake while Codex can make progress, shows every active task as a battery segment, and lets the Mac sleep when no agent can continue unattended.
 
 **Topics**
 
@@ -46,7 +46,7 @@ Every screenshot and video must reflect behavior present in the published build.
 
 Hi Product Hunt — I built TermiNap after repeatedly starting long Codex tasks before stepping away from my Mac.
 
-Generic keep-awake tools solve only half of the problem: they can keep a Mac running, but they do not know when the final coding agent has finished. TermiNap follows the actual terminal-agent lifecycle, represents every active task as a battery segment, and releases the Mac to sleep after the last one is done.
+Generic keep-awake tools solve only half of the problem: they can keep a Mac running, but they do not know when the final coding agent has finished or is blocked on human approval. TermiNap follows the actual terminal-agent lifecycle, represents every progressing task as a battery segment, and releases the Mac when no agent can continue unattended.
 
 It is a small native Swift app, runs locally, needs no account, and does not read prompts or source code. The Codex hook integration is visible and still requires the user to approve it; TermiNap does not bypass that security boundary.
 
@@ -73,6 +73,10 @@ Create one 12-second silent loop:
 ### Does the display stay on?
 
 No. The intended behavior is to prevent idle system sleep while allowing normal display sleep.
+
+### What happens when Codex asks for permission?
+
+TermiNap treats the task as paused because it cannot continue unattended. If no other task is progressing, the normal cancelable power countdown starts. A future release may notify the user through an instant-messaging channel.
 
 ### Does it work with the lid closed?
 

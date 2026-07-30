@@ -4,7 +4,7 @@
 
 TermiNap 是一个原生 macOS 菜单栏工具。它把每个活跃的终端 Codex 任务显示为一格电量，并在最后一个任务完成后自动熄屏、系统待机或关机。
 
-[English](README.md) · [营销执行方案](MARKETING_PLAN.md) · [Product Hunt 发布材料](PRODUCT_HUNT.md)
+[English](README.md) · [产品状态与电源逻辑](docs/PRODUCT_STATE_LOGIC.md) · [营销执行方案](MARKETING_PLAN.md) · [Product Hunt 发布材料](PRODUCT_HUNT.md)
 
 > 当前为开发预览版：从 Agent 工作到 Mac 自动待机的核心闭环已经实现。公开二进制版本仍需补齐低电量保护、Developer ID 正式签名和 Apple 公证。
 
@@ -17,13 +17,14 @@ TermiNap 按 Agent 生命周期工作：
 - 一个活跃终端任务对应一格电量。
 - 多个 Codex 终端统一计数。
 - 至少一个任务活跃时，Mac 保持唤醒，显示器仍可按系统设置正常熄灭。
+- Codex 等待 Permission 时按“暂停推进”处理，不再计入活跃任务。
 - 最后一个任务完成后启动可取消倒计时。
 - 倒计时中出现新任务会取消本次电源动作。
 - 活动状态和设置只保存在本机。
 
 ## 当前能力
 
-- 通过生命周期 hooks 跟踪终端 Codex。
+- 通过五个生命周期 hooks 跟踪终端 Codex 的运行、等待授权、恢复和结束。
 - 忽略没有 TTY 的 Codex/ChatGPT 桌面会话。
 - 最多显示八个任务，超出后显示 `+N`。
 - Agent 工作时使用进程级 macOS 断言，只阻止用户空闲导致的系统睡眠。
@@ -32,7 +33,7 @@ TermiNap 按 Agent 生命周期工作：
 - 支持显示器熄灭、系统待机和关机。
 - 开启关机前必须二次确认。
 - 合并用户级 hooks，不会删除其他工具的配置。
-- 首次启动显示 `0/3` 至 `3/3` 的 hooks 信任进度。
+- 首次启动显示 `0/5` 至 `5/5` 的 hooks 信任进度。
 - 在多显示器环境中确保悬浮窗口不会越界。
 
 ## 环境要求
@@ -57,15 +58,15 @@ open ~/Applications/TermiNap.app
 
 ## 信任 Codex hooks
 
-首次启动时，TermiNap 会向 `~/.codex/hooks.json` 合并三个处理器，并保留其中已有的其他 hooks。若配置文件已经存在，会创建 `~/.codex/hooks.json.before-terminap`。
+首次启动时，TermiNap 会向 `~/.codex/hooks.json` 合并五个处理器，并保留其中已有的其他 hooks。若配置文件已经存在，会创建 `~/.codex/hooks.json.before-terminap`。
 
 Codex 强制要求用户本人批准新的 hook 定义：
 
 1. 在 TermiNap 中点击“新开引导 Codex”。
 2. 粘贴 TermiNap 已复制到剪贴板的 `/hooks`。
-3. 检查并信任三个 TermiNap hooks。
+3. 检查并信任五个 TermiNap hooks。
 
-TermiNap 通过 Codex app-server 自动复检；三项全部通过后切换到电量界面。它不会修改 Codex 私有信任状态，也不会使用绕过信任的危险参数。
+TermiNap 通过 Codex app-server 自动复检；五项全部通过后切换到电量界面。它不会修改 Codex 私有信任状态，也不会使用绕过信任的危险参数。
 
 ## 隐私与安全
 
@@ -83,6 +84,7 @@ TermiNap 通过 Codex app-server 自动复检；三项全部通过后切换到�
 
 - 增加仅接通电源启用和低电量保护。
 - 增加登录时启动和完成通知。
+- 增加 Permission 等待时的飞书等即时通讯提醒。
 - 发布 Developer ID 签名并通过 Apple 公证的 DMG。
 
 在实现权限范围明确、可审计且能可靠恢复的辅助程序前，不支持也不宣传合盖运行。

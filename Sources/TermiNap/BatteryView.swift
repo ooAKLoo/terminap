@@ -407,9 +407,9 @@ struct BatteryView: View {
                     complete: hooksWereInstalled
                 )
                 SetupRow(
-                    title: "信任 3 个 TermiNap hooks",
-                    detail: "\(model.trustedHookCount)/3 已确认",
-                    complete: model.trustedHookCount == 3
+                    title: "信任 \(model.requiredHookCount) 个 TermiNap hooks",
+                    detail: "\(model.trustedHookCount)/\(model.requiredHookCount) 已确认",
+                    complete: model.trustedHookCount == model.requiredHookCount
                 )
             }
 
@@ -498,7 +498,7 @@ struct BatteryView: View {
             }
             return "点击下方按钮，新 Codex 启动后粘贴并运行 /hooks。"
         case .ready:
-            return "3 个 hooks 均已信任。"
+            return "\(model.requiredHookCount) 个 hooks 均已信任。"
         case let .unavailable(message):
             return "\(message)。仍可在 Codex 中运行 /hooks 完成确认。"
         case let .installFailed(message):
@@ -535,11 +535,20 @@ struct BatteryView: View {
     private var detailText: String {
         if model.isPreventingIdleSleep {
             if model.busyCount == 0 {
+                if model.waitingForPermissionCount > 0 {
+                    return "等待授权已按暂停推进处理"
+                }
                 return "收尾倒计时中 · Mac 保持唤醒"
+            }
+            if model.waitingForPermissionCount > 0 {
+                return "Mac 保持唤醒 · \(model.waitingForPermissionCount) 个等待授权"
             }
             return "Mac 保持唤醒 · 屏幕仍可自动熄灭"
         }
         if model.busyCount == 0 {
+            if model.waitingForPermissionCount > 0 {
+                return "等待授权不计入活跃任务"
+            }
             return model.settings.enabled
                 ? "夜班守护已开启 · 等待下一批任务"
                 : "Agent 夜班守护目前关闭"

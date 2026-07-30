@@ -22,7 +22,7 @@ func renderPreview(
     try activityStore.mutate { state in
         for index in 0..<activeCount {
             let sessionID = "preview-\(index)"
-            state.busy[sessionID] = CodexTask(
+            state.tracked[sessionID] = CodexTask(
                 sessionID: sessionID,
                 turnID: "turn-\(index)",
                 cwd: "/Users/demo/project-\(index)",
@@ -37,7 +37,7 @@ func renderPreview(
         BatterySettings(
             enabled: enabled,
             action: .systemSleep,
-            delaySeconds: 15
+            delaySeconds: 30
         )
     )
 
@@ -94,7 +94,12 @@ func renderSetupPreview(to outputURL: URL, trustedCount: Int) throws {
         activityStore: ActivityStore(baseDirectory: previewDirectory),
         settingsStore: SettingsStore(baseDirectory: previewDirectory)
     )
-    model.setHookTrustForPreview(trustedCount: min(max(trustedCount, 0), 3))
+    model.setHookTrustForPreview(
+        trustedCount: min(
+            max(trustedCount, 0),
+            CodexHookTrustReport.requiredKinds.count
+        )
+    )
 
     let hostingView = NSHostingView(
         rootView: BatteryView(

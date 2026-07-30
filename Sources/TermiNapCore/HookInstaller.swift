@@ -56,15 +56,28 @@ public enum HookInstaller {
         }
 
         var hooks = root["hooks"] as? [String: Any] ?? [:]
+        for eventName in Array(hooks.keys) {
+            guard let groups = hooks[eventName] as? [[String: Any]] else {
+                continue
+            }
+            let preservedGroups = groups.compactMap(removingOwnedCommands)
+            if preservedGroups.isEmpty {
+                hooks.removeValue(forKey: eventName)
+            } else {
+                hooks[eventName] = preservedGroups
+            }
+        }
+
         let eventCommands: [(String, String)] = [
             ("UserPromptSubmit", "start"),
+            ("PermissionRequest", "permission"),
+            ("PostToolUse", "resume"),
             ("Stop", "stop"),
             ("SessionEnd", "end"),
         ]
 
         for (eventName, hookKind) in eventCommands {
             var groups = hooks[eventName] as? [[String: Any]] ?? []
-            groups.removeAll(where: containsOwnedCommand)
             groups.append([
                 "hooks": [[
                     "type": "command",
@@ -93,16 +106,24 @@ public enum HookInstaller {
         )
     }
 
-    private static func containsOwnedCommand(_ group: [String: Any]) -> Bool {
-        guard let handlers = group["hooks"] as? [[String: Any]] else {
-            return false
+    private static func removingOwnedCommands(
+        from group: [String: Any]
+    ) -> [String: Any]? {
+        guard var handlers = group["hooks"] as? [[String: Any]] else {
+            return group
         }
-        return handlers.contains { handler in
+        handlers.removeAll { handler in
             guard let command = handler["command"] as? String else {
                 return false
             }
             return ownedNeedles.contains(where: command.contains)
         }
+        guard !handlers.isEmpty else {
+            return nil
+        }
+        var preserved = group
+        preserved["hooks"] = handlers
+        return preserved
     }
 
     private static func shellQuote(_ value: String) -> String {

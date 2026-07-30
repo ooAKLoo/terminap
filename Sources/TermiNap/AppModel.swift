@@ -13,6 +13,7 @@ enum HookSetupState: Equatable {
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var tasks: [CodexTask] = []
+    @Published private(set) var waitingForPermissionTasks: [CodexTask] = []
     @Published private(set) var settings: BatterySettings
     @Published private(set) var countdown: Int?
     @Published private(set) var hookSetupState: HookSetupState = .checking
@@ -69,9 +70,19 @@ final class AppModel: ObservableObject {
         tasks.count
     }
 
+    var waitingForPermissionCount: Int {
+        waitingForPermissionTasks.count
+    }
+
     var statusText: String {
         if busyCount == 0 {
+            if waitingForPermissionCount > 0 {
+                return "\(waitingForPermissionCount) 个 Codex 任务等待授权"
+            }
             return "所有终端任务已空闲"
+        }
+        if waitingForPermissionCount > 0 {
+            return "\(busyCount) 个进行中 · \(waitingForPermissionCount) 个等待授权"
         }
         return "\(busyCount) 个 Codex 任务进行中"
     }
@@ -104,14 +115,18 @@ final class AppModel: ObservableObject {
             if report.modifiedCount > 0 {
                 return "监控配置有变化 · 需重新信任"
             }
-            return "监控已安装 · \(report.trustedCount)/3 已信任"
+            return "监控已安装 · \(report.trustedCount)/\(requiredHookCount) 已信任"
         case .ready:
-            return "监控已安装 · 3/3 已信任"
+            return "监控已安装 · \(requiredHookCount)/\(requiredHookCount) 已信任"
         case .unavailable:
             return "监控已安装 · 暂时无法自动检测"
         case .installFailed:
             return "监控安装失败"
         }
+    }
+
+    var requiredHookCount: Int {
+        CodexHookTrustReport.requiredKinds.count
     }
 
     func setHookInstalled(_ installed: Bool, error: Error? = nil) {
@@ -226,7 +241,7 @@ final class AppModel: ObservableObject {
             #!/bin/zsh
             clear
             echo "TermiNap 已把 /hooks 复制到剪贴板。"
-            echo "Codex 启动后，请按 Command-V 粘贴并回车，然后信任 3 个 TermiNap hooks。"
+            echo "Codex 启动后，请按 Command-V 粘贴并回车，然后信任 \(requiredHookCount) 个 TermiNap hooks。"
             echo
             exec \(quotedCodex)
             """
@@ -333,6 +348,9 @@ final class AppModel: ObservableObject {
             }
             let state = try activityStore.read()
             tasks = state.busy.values.sorted { $0.startedAt < $1.startedAt }
+            waitingForPermissionTasks = state.waitingForPermission.values.sorted {
+                $0.startedAt < $1.startedAt
+            }
             let decision = decisionEngine.observe(
                 busyCount: tasks.count,
                 automationEnabled: settings.enabled
