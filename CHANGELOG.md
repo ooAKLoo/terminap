@@ -11,6 +11,11 @@ All notable changes to TermiNap will be documented in this file.
 - In-app wake-guard status and clearer night-shift automation language.
 - Fail-safe assertion cleanup on disabled automation, state errors, stale sessions, and process exit.
 
+### Fixed
+
+- Restore the floating panel to its previous external display and relative position after display topology changes.
+- Expand upward near the screen's bottom edge while keeping the battery meter fixed and revealing content from bottom to top.
+
 ### Verified
 
 - Unit coverage for wake policy, idempotent acquisition, error handling, and deinitialization cleanup.

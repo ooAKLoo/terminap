@@ -7,7 +7,9 @@ func renderPreview(
     to outputURL: URL,
     activeCount: Int,
     enabled: Bool,
-    expanded: Bool = true
+    expanded: Bool = true,
+    resizeAnchor: PanelResizeAnchor = .topEdge,
+    renderedHeight: CGFloat? = nil
 ) throws {
     _ = NSApplication.shared
     let previewDirectory = FileManager.default.temporaryDirectory
@@ -49,7 +51,8 @@ func renderPreview(
         rootView: BatteryView(
             model: model,
             presentation: PanelPresentationState(
-                initiallyExpanded: expanded
+                initiallyExpanded: expanded,
+                resizeAnchor: resizeAnchor
             )
         )
     )
@@ -57,9 +60,13 @@ func renderPreview(
         origin: .zero,
         size: NSSize(
             width: BatteryView.panelWidth,
-            height: expanded
-                ? BatteryView.dashboardExpandedHeight
-                : BatteryView.collapsedHeight
+            height:
+                renderedHeight
+                ?? (
+                    expanded
+                    ? BatteryView.dashboardExpandedHeight
+                    : BatteryView.collapsedHeight
+                )
         )
     )
     hostingView.layoutSubtreeIfNeeded()

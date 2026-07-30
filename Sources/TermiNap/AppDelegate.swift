@@ -6,6 +6,7 @@ import SwiftUI
 final class PanelFrameMorphAnimator {
     private weak var panel: NSPanel?
     private var targetHeight: CGFloat = 0
+    private var resizeAnchor: PanelResizeAnchor = .topEdge
     private var velocity: CGFloat = 0
     private var timer: Timer?
     private var lastTimestamp: TimeInterval = 0
@@ -17,11 +18,14 @@ final class PanelFrameMorphAnimator {
     func animate(
         panel: NSPanel,
         to targetFrame: CGRect,
+        keeping resizeAnchor: PanelResizeAnchor,
         completion: @escaping () -> Void
     ) {
         self.panel = panel
         targetHeight = targetFrame.height
+        self.resizeAnchor = resizeAnchor
         self.completion = completion
+        align(panel, with: targetFrame, keeping: resizeAnchor)
 
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             stop()
@@ -44,6 +48,10 @@ final class PanelFrameMorphAnimator {
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+    }
+
+    func updateResizeAnchor(_ resizeAnchor: PanelResizeAnchor) {
+        self.resizeAnchor = resizeAnchor
     }
 
     private func tick() {
@@ -69,11 +77,10 @@ final class PanelFrameMorphAnimator {
             delta: dt
         )
 
-        let nextFrame = CGRect(
-            x: frame.minX,
-            y: frame.maxY - max(nextHeight, 1),
-            width: frame.width,
-            height: max(nextHeight, 1)
+        let nextFrame = PanelPlacement.resizedFrame(
+            frame,
+            targetHeight: max(nextHeight, 1),
+            keeping: resizeAnchor
         )
         panel.setFrame(nextFrame, display: true)
         updateContentMask(panel, height: nextFrame.height)
@@ -110,12 +117,10 @@ final class PanelFrameMorphAnimator {
         timer = nil
         velocity = 0
         if let panel {
-            let frame = panel.frame
-            let finalFrame = CGRect(
-                x: frame.minX,
-                y: frame.maxY - targetHeight,
-                width: frame.width,
-                height: targetHeight
+            let finalFrame = PanelPlacement.resizedFrame(
+                panel.frame,
+                targetHeight: targetHeight,
+                keeping: resizeAnchor
             )
             panel.setFrame(finalFrame, display: true)
             updateContentMask(panel, height: targetHeight)
@@ -123,6 +128,28 @@ final class PanelFrameMorphAnimator {
         let completion = self.completion
         self.completion = nil
         completion?()
+    }
+
+    private func align(
+        _ panel: NSPanel,
+        with targetFrame: CGRect,
+        keeping anchor: PanelResizeAnchor
+    ) {
+        let currentFrame = panel.frame
+        let originY: CGFloat
+        switch anchor {
+        case .topEdge:
+            originY = targetFrame.maxY - currentFrame.height
+        case .bottomEdge:
+            originY = targetFrame.minY
+        }
+        let alignedFrame = CGRect(
+            x: targetFrame.minX,
+            y: originY,
+            width: targetFrame.width,
+            height: currentFrame.height
+        )
+        panel.setFrame(alignedFrame, display: true)
     }
 
     private func updateContentMask(_ panel: NSPanel, height: CGFloat) {
@@ -183,6 +210,11 @@ final class HoverHostingView<Content: View>: NSHostingView<Content> {
     }
 }
 
+private struct RememberedPanelPlacement {
+    let displayIdentifier: String
+    let relativePosition: PanelRelativePosition
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let panelMargin: CGFloat = 32
@@ -192,6 +224,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelPresentation: PanelPresentationState?
     private let panelMorphAnimator = PanelFrameMorphAnimator()
     private var screenChangeObserver: NSObjectProtocol?
+    private var resizeAnchor: PanelResizeAnchor = .topEdge
+    private var rememberedPanelPlacement: RememberedPanelPlacement?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -270,6 +304,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 presentation: presentation,
                 onPreferredHeightChange: { [weak self] height in
                     self?.resizePanel(to: height)
+                },
+                onDragEnded: { [weak self] in
+                    self?.rememberCurrentPanelPlacement()
                 }
             )
         )
@@ -303,14 +340,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        var targetFrame = PanelPlacement.resizedFrameKeepingTopEdge(
+        let screen =
+            screenContainingPanel(panel)
+            ?? screenContainingMouse()
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+
+        if let screen {
+            if height > panel.frame.height {
+                resizeAnchor = PanelPlacement.preferredResizeAnchor(
+                    for: panel.frame,
+                    targetHeight: height,
+                    visibleFrame: screen.visibleFrame,
+                    margin: panelMargin
+                )
+            }
+        }
+        panelPresentation?.setResizeAnchor(resizeAnchor)
+
+        var targetFrame = PanelPlacement.resizedFrame(
             panel.frame,
-            targetHeight: height
+            targetHeight: height,
+            keeping: resizeAnchor
         )
-        let panelCenter = NSPoint(x: panel.frame.midX, y: panel.frame.midY)
-        let screen = NSScreen.screens.first(where: {
-            NSMouseInRect(panelCenter, $0.frame, false)
-        }) ?? screenContainingMouse() ?? NSScreen.main ?? NSScreen.screens.first
 
         if let screen {
             targetFrame.origin = PanelPlacement.clampedOrigin(
@@ -323,7 +375,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         panelMorphAnimator.animate(
             panel: panel,
-            to: targetFrame
+            to: targetFrame,
+            keeping: resizeAnchor
         ) { [weak self] in
             self?.panelPresentation?.panelAnimationDidComplete()
         }
@@ -364,16 +417,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             margin: panelMargin
         )
         panel.setFrameOrigin(origin)
+        rememberPanelPlacement(panel, on: screen)
     }
 
     private func keepPanelOnScreen() {
         guard let panel else {
             return
         }
-        let panelCenter = NSPoint(x: panel.frame.midX, y: panel.frame.midY)
-        let screen = NSScreen.screens.first(where: {
-            NSMouseInRect(panelCenter, $0.frame, false)
-        }) ?? screenContainingMouse() ?? NSScreen.main ?? NSScreen.screens.first
+
+        if let rememberedPanelPlacement,
+           let rememberedScreen = NSScreen.screens.first(where: {
+               displayIdentifier(for: $0)
+                   == rememberedPanelPlacement.displayIdentifier
+           })
+        {
+            restorePanel(
+                panel,
+                to: rememberedPanelPlacement,
+                on: rememberedScreen
+            )
+            return
+        }
+
+        let screen =
+            screenContainingPanel(panel)
+            ?? screenContainingMouse()
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
         guard let screen else {
             return
         }
@@ -386,10 +456,125 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.setFrameOrigin(origin)
     }
 
+    private func rememberCurrentPanelPlacement() {
+        guard
+            let panel,
+            let screen =
+                screenContainingPanel(panel)
+                ?? screenContainingMouse()
+                ?? NSScreen.main
+                ?? NSScreen.screens.first
+        else {
+            return
+        }
+        rememberPanelPlacement(panel, on: screen)
+    }
+
+    private func rememberPanelPlacement(
+        _ panel: NSPanel,
+        on screen: NSScreen
+    ) {
+        let collapsedFrame = PanelPlacement.resizedFrame(
+            panel.frame,
+            targetHeight: BatteryView.collapsedHeight,
+            keeping: resizeAnchor
+        )
+        let relativePosition = PanelPlacement.relativePosition(
+            for: collapsedFrame.origin,
+            panelSize: collapsedFrame.size,
+            visibleFrame: screen.visibleFrame,
+            margin: panelMargin
+        )
+        rememberedPanelPlacement = RememberedPanelPlacement(
+            displayIdentifier: displayIdentifier(for: screen),
+            relativePosition: relativePosition
+        )
+    }
+
+    private func restorePanel(
+        _ panel: NSPanel,
+        to placement: RememberedPanelPlacement,
+        on screen: NSScreen
+    ) {
+        let collapsedSize = CGSize(
+            width: panel.frame.width,
+            height: BatteryView.collapsedHeight
+        )
+        let collapsedOrigin = PanelPlacement.origin(
+            for: placement.relativePosition,
+            panelSize: collapsedSize,
+            visibleFrame: screen.visibleFrame,
+            margin: panelMargin
+        )
+        let collapsedFrame = CGRect(
+            origin: collapsedOrigin,
+            size: collapsedSize
+        )
+
+        let expandedHeight =
+            model?.shouldShowHookSetup == true
+            ? BatteryView.setupExpandedHeight
+            : BatteryView.dashboardExpandedHeight
+        resizeAnchor = PanelPlacement.preferredResizeAnchor(
+            for: collapsedFrame,
+            targetHeight: expandedHeight,
+            visibleFrame: screen.visibleFrame,
+            margin: panelMargin
+        )
+        panelPresentation?.setResizeAnchor(resizeAnchor)
+        panelMorphAnimator.updateResizeAnchor(resizeAnchor)
+
+        var restoredFrame = PanelPlacement.resizedFrame(
+            collapsedFrame,
+            targetHeight: panel.frame.height,
+            keeping: resizeAnchor
+        )
+        restoredFrame.origin = PanelPlacement.clampedOrigin(
+            restoredFrame.origin,
+            panelSize: restoredFrame.size,
+            visibleFrame: screen.visibleFrame,
+            margin: panelMargin
+        )
+        panel.setFrame(restoredFrame, display: true)
+    }
+
+    private func screenContainingPanel(_ panel: NSWindow) -> NSScreen? {
+        let panelCenter = NSPoint(
+            x: panel.frame.midX,
+            y: panel.frame.midY
+        )
+        return NSScreen.screens.first {
+            NSMouseInRect(panelCenter, $0.frame, false)
+        }
+    }
+
     private func screenContainingMouse() -> NSScreen? {
         let mouseLocation = NSEvent.mouseLocation
         return NSScreen.screens.first {
             NSMouseInRect(mouseLocation, $0.frame, false)
         }
+    }
+
+    private func displayIdentifier(for screen: NSScreen) -> String {
+        let screenNumberKey = NSDeviceDescriptionKey("NSScreenNumber")
+        guard
+            let screenNumber =
+                screen.deviceDescription[screenNumberKey] as? NSNumber
+        else {
+            return screen.localizedName
+        }
+
+        let displayID = CGDirectDisplayID(screenNumber.uint32Value)
+        guard
+            let uuid =
+                CGDisplayCreateUUIDFromDisplayID(displayID)?
+                    .takeRetainedValue()
+        else {
+            return "display-\(displayID)"
+        }
+        guard let uuidString = CFUUIDCreateString(nil, uuid) else {
+            return "display-\(displayID)"
+        }
+        return uuidString as String
     }
 }

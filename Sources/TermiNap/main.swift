@@ -49,15 +49,29 @@ if CommandLine.arguments.dropFirst().first == "--render-preview" {
     }
     let outputURL = URL(fileURLWithPath: CommandLine.arguments[2])
     let enabled = CommandLine.arguments[4] == "true"
-    let expanded = CommandLine.arguments.count < 6
-        || CommandLine.arguments[5] != "collapsed"
+    let previewMode =
+        CommandLine.arguments.count < 6
+        ? "expanded"
+        : CommandLine.arguments[5]
+    let expanded = previewMode != "collapsed"
+    let renderedHeight: CGFloat? =
+        previewMode == "collapsing"
+        ? BatteryView.collapsedHeight
+        : nil
+    let resizeAnchor: PanelResizeAnchor =
+        CommandLine.arguments.count >= 7
+        && CommandLine.arguments[6] == "upward"
+        ? .bottomEdge
+        : .topEdge
     let status: Int32 = MainActor.assumeIsolated {
         do {
             try renderPreview(
                 to: outputURL,
                 activeCount: max(activeCount, 0),
                 enabled: enabled,
-                expanded: expanded
+                expanded: expanded,
+                resizeAnchor: resizeAnchor,
+                renderedHeight: renderedHeight
             )
             return 0
         } catch {

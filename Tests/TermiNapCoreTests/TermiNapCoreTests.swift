@@ -326,6 +326,95 @@ final class TermiNapCoreTests: XCTestCase {
         XCTAssertEqual(expanded.maxY, frame.maxY)
     }
 
+    func testPanelResizeKeepsItsBottomEdgeFixed() {
+        let frame = CGRect(x: 32, y: 32, width: 300, height: 104)
+
+        let expanded = PanelPlacement.resizedFrame(
+            frame,
+            targetHeight: 330,
+            keeping: .bottomEdge
+        )
+        let collapsed = PanelPlacement.resizedFrame(
+            expanded,
+            targetHeight: 104,
+            keeping: .bottomEdge
+        )
+
+        XCTAssertEqual(expanded, CGRect(x: 32, y: 32, width: 300, height: 330))
+        XCTAssertEqual(collapsed, frame)
+        XCTAssertEqual(expanded.minY, frame.minY)
+    }
+
+    func testPanelNearBottomPrefersUpwardExpansion() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1728, height: 1080)
+        let frame = CGRect(x: 32, y: 32, width: 300, height: 104)
+
+        let anchor = PanelPlacement.preferredResizeAnchor(
+            for: frame,
+            targetHeight: 330,
+            visibleFrame: visibleFrame,
+            margin: 32
+        )
+
+        XCTAssertEqual(anchor, .bottomEdge)
+    }
+
+    func testPanelWithRoomBelowKeepsDownwardExpansion() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1728, height: 1080)
+        let frame = CGRect(x: 32, y: 700, width: 300, height: 104)
+
+        let anchor = PanelPlacement.preferredResizeAnchor(
+            for: frame,
+            targetHeight: 330,
+            visibleFrame: visibleFrame,
+            margin: 32
+        )
+
+        XCTAssertEqual(anchor, .topEdge)
+    }
+
+    func testPanelRelativePositionSurvivesDisplayGeometryChanges() {
+        let panelSize = CGSize(width: 300, height: 104)
+        let oldDisplay = CGRect(x: -1920, y: 0, width: 1920, height: 1080)
+        let newDisplay = CGRect(x: 0, y: 25, width: 2560, height: 1415)
+        let expectedPosition = PanelRelativePosition(
+            horizontal: 0.25,
+            vertical: 0.75
+        )
+        let oldOrigin = PanelPlacement.origin(
+            for: expectedPosition,
+            panelSize: panelSize,
+            visibleFrame: oldDisplay,
+            margin: 32
+        )
+
+        let rememberedPosition = PanelPlacement.relativePosition(
+            for: oldOrigin,
+            panelSize: panelSize,
+            visibleFrame: oldDisplay,
+            margin: 32
+        )
+        let restoredOrigin = PanelPlacement.origin(
+            for: rememberedPosition,
+            panelSize: panelSize,
+            visibleFrame: newDisplay,
+            margin: 32
+        )
+
+        XCTAssertEqual(
+            rememberedPosition.horizontal,
+            expectedPosition.horizontal,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            rememberedPosition.vertical,
+            expectedPosition.vertical,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(restoredOrigin.x, 581, accuracy: 0.001)
+        XCTAssertEqual(restoredOrigin.y, 992.25, accuracy: 0.001)
+    }
+
     private func hook(command: String, status: String) -> [String: Any] {
         [
             "enabled": true,

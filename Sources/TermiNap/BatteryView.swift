@@ -11,18 +11,31 @@ private enum Palette {
     static let warning = Color(red: 1.00, green: 0.76, blue: 0.32)
 }
 
+private enum PanelLayout {
+    static let padding: CGFloat = 18
+    static let contentSpacing: CGFloat = 16
+    static let batteryHeight: CGFloat = 68
+    static let batteryContentInset =
+        padding + batteryHeight + contentSpacing
+}
+
 @MainActor
 final class PanelPresentationState: ObservableObject {
     @Published private(set) var isContentExpanded: Bool
     @Published private(set) var isPanelExpanded: Bool
+    @Published private(set) var resizeAnchor: PanelResizeAnchor
 
     private var pointerIsInside = false
     private var interactionIsLocked = false
     private var pendingCollapse: Task<Void, Never>?
 
-    init(initiallyExpanded: Bool = false) {
+    init(
+        initiallyExpanded: Bool = false,
+        resizeAnchor: PanelResizeAnchor = .topEdge
+    ) {
         isContentExpanded = initiallyExpanded
         isPanelExpanded = initiallyExpanded
+        self.resizeAnchor = resizeAnchor
     }
 
     func setPointerInside(_ isInside: Bool) {
@@ -49,6 +62,10 @@ final class PanelPresentationState: ObservableObject {
         if !isPanelExpanded {
             isContentExpanded = false
         }
+    }
+
+    func setResizeAnchor(_ resizeAnchor: PanelResizeAnchor) {
+        self.resizeAnchor = resizeAnchor
     }
 
     private func expand() {
@@ -96,21 +113,25 @@ struct BatteryView: View {
     @State private var confirmingShutdown = false
 
     private let onPreferredHeightChange: (CGFloat) -> Void
+    private let onDragEnded: () -> Void
 
     init(
         model: AppModel,
         presentation: PanelPresentationState,
-        onPreferredHeightChange: @escaping (CGFloat) -> Void = { _ in }
+        onPreferredHeightChange: @escaping (CGFloat) -> Void = { _ in },
+        onDragEnded: @escaping () -> Void = {}
     ) {
         self.model = model
         self.presentation = presentation
         self.onPreferredHeightChange = onPreferredHeightChange
+        self.onDragEnded = onDragEnded
     }
 
     var body: some View {
         GeometryReader { geometry in
+            let currentHeight = geometry.size.height
             let progress = morphProgress(
-                currentHeight: geometry.size.height
+                currentHeight: currentHeight
             )
             let cornerRadius = 30 - (6 * progress)
             let detailProgress = normalizedProgress(
@@ -127,38 +148,60 @@ struct BatteryView: View {
                 cornerRadius: cornerRadius,
                 style: .continuous
             )
+            let expandsUpward =
+                presentation.resizeAnchor == .bottomEdge
 
-            ZStack(alignment: .top) {
+            ZStack(alignment: expandsUpward ? .bottom : .top) {
                 shape.fill(Palette.panel)
 
-                VStack(
-                    spacing: presentation.isContentExpanded ? 16 : 0
-                ) {
-                    BatteryMeter(activeCount: model.busyCount)
+                if presentation.isContentExpanded {
+                    VStack(spacing: PanelLayout.contentSpacing) {
+                        if expandsUpward {
+                            header
+                                .opacity(Double(footerProgress))
+                                .offset(y: 4 * (1 - footerProgress))
 
-                    if presentation.isContentExpanded {
-                        Group {
-                            if model.shouldShowHookSetup {
-                                hookSetup
-                            } else {
-                                dashboard
-                            }
+                            Spacer(minLength: 0)
+
+                            panelDetails
+                                .opacity(Double(detailProgress))
+                                .offset(y: 7 * (1 - detailProgress))
+                        } else {
+                            panelDetails
+                                .opacity(Double(detailProgress))
+                                .offset(y: 7 * (1 - detailProgress))
+
+                            Spacer(minLength: 0)
+
+                            header
+                                .opacity(Double(footerProgress))
+                                .offset(y: 4 * (1 - footerProgress))
                         }
-                        .opacity(Double(detailProgress))
-                        .offset(y: 7 * (1 - detailProgress))
-
-                        Spacer(minLength: 0)
-
-                        header
-                            .opacity(Double(footerProgress))
-                            .offset(y: 4 * (1 - footerProgress))
                     }
+                    .padding(.horizontal, PanelLayout.padding)
+                    .padding(
+                        expandsUpward ? .top : .bottom,
+                        PanelLayout.padding
+                    )
+                    .padding(
+                        expandsUpward ? .bottom : .top,
+                        PanelLayout.batteryContentInset
+                    )
+                    .frame(
+                        width: Self.panelWidth,
+                        height: currentHeight
+                    )
                 }
-                .padding(18)
+
+                BatteryMeter(
+                    activeCount: model.busyCount,
+                    onDragEnded: onDragEnded
+                )
+                .padding(PanelLayout.padding)
                 .frame(
                     width: Self.panelWidth,
-                    height: preferredHeight,
-                    alignment: .top
+                    height: currentHeight,
+                    alignment: expandsUpward ? .bottom : .top
                 )
             }
             .clipShape(shape)
@@ -214,17 +257,19 @@ struct BatteryView: View {
         .environment(\.colorScheme, .dark)
     }
 
-    private var preferredHeight: CGFloat {
-        guard presentation.isContentExpanded else {
-            return Self.collapsedHeight
-        }
-        return expandedHeight
-    }
-
     private var expandedHeight: CGFloat {
         model.shouldShowHookSetup
             ? Self.setupExpandedHeight
             : Self.dashboardExpandedHeight
+    }
+
+    @ViewBuilder
+    private var panelDetails: some View {
+        if model.shouldShowHookSetup {
+            hookSetup
+        } else {
+            dashboard
+        }
     }
 
     private func morphProgress(currentHeight: CGFloat) -> CGFloat {
@@ -605,6 +650,7 @@ private struct SetupRow: View {
 
 private struct BatteryMeter: View {
     let activeCount: Int
+    let onDragEnded: () -> Void
     private let segmentCount = 8
 
     var body: some View {
@@ -625,7 +671,7 @@ private struct BatteryMeter: View {
                 }
             }
             .padding(7)
-            .frame(width: 238, height: 68)
+            .frame(width: 238, height: PanelLayout.batteryHeight)
             .background(
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
                     .fill(Color.black.opacity(0.18))
@@ -653,22 +699,37 @@ private struct BatteryMeter: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(activeCount) 个 Codex 任务正在进行")
         .overlay {
-            WindowDragHandle()
+            WindowDragHandle(onDragEnded: onDragEnded)
                 .accessibilityHidden(true)
         }
     }
 }
 
 private struct WindowDragHandle: NSViewRepresentable {
+    let onDragEnded: () -> Void
+
     func makeNSView(context: Context) -> DragHandleView {
-        DragHandleView()
+        DragHandleView(onDragEnded: onDragEnded)
     }
 
-    func updateNSView(_ nsView: DragHandleView, context: Context) {}
+    func updateNSView(_ nsView: DragHandleView, context: Context) {
+        nsView.onDragEnded = onDragEnded
+    }
 }
 
 private final class DragHandleView: NSView {
     private var lastMouseLocation: NSPoint?
+    var onDragEnded: () -> Void
+
+    init(onDragEnded: @escaping () -> Void) {
+        self.onDragEnded = onDragEnded
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
     override var mouseDownCanMoveWindow: Bool { true }
 
@@ -703,6 +764,7 @@ private final class DragHandleView: NSView {
     override func mouseUp(with event: NSEvent) {
         lastMouseLocation = nil
         window?.invalidateCursorRects(for: self)
+        onDragEnded()
     }
 
     override func resetCursorRects() {
