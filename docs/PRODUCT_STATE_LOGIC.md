@@ -23,6 +23,7 @@ TermiNap 只把“无需用户介入、仍能自主向前执行”的终端 Code
 stateDiagram-v2
     [*] --> 未跟踪
     未跟踪 --> 运行中: UserPromptSubmit
+    未跟踪 --> 运行中: App 补扫到未完成 Turn
     运行中 --> 等待授权: PermissionRequest
     等待授权 --> 运行中: PostToolUse
     运行中 --> 已结束: Stop / SessionEnd
@@ -45,6 +46,8 @@ stateDiagram-v2
 | `SessionEnd` | `end` | 运行中或等待授权 → 已结束 | 清理整个会话状态 |
 
 只有带 TTY 的本机终端 Codex 会进入该状态机。ChatGPT/Codex 桌面会话和远程 Linux 主机中的 Codex 当前不在监控范围内。
+
+如果终端 Codex 早于 TermiNap 启动，App 会低频枚举带 TTY 的 Codex 进程，并只检查这些进程当前持有的顶层 CLI rollout 文件；同一终端进程打开的子代理 rollout 不会被重复计数。最近的生命周期事件为 `task_started` 且尚无对应完成事件时，任务会被补录；出现 `task_complete`、`turn_aborted` 或进程退出后会被清理。Hook 与补扫命中同一 Turn 时，以 Hook 的状态为准，避免覆盖“等待授权”等更精确的实时状态。补扫不读取提示词、模型回复、工具参数或终端输出。
 
 ## 电源决策如何执行
 

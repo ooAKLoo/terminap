@@ -151,6 +151,169 @@ final class TermiNapCoreTests: XCTestCase {
         XCTAssertNotNil(try store.read().busy["a"])
     }
 
+    func testDiscoversActiveTurnFromCodexOpenedBeforeApp() throws {
+        let sessionsRoot = temporaryDirectory()
+        let rolloutURL = sessionsRoot.appendingPathComponent(
+            "rollout-2026-08-02T10-00-00-session-before-app.jsonl"
+        )
+        let rollout = """
+        {"type":"session_meta","payload":{"id":"session-before-app","cwd":"/project","originator":"codex-tui","source":"cli"}}
+        {"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-active","started_at":1234}}
+        {"type":"response_item","payload":{"type":"message","content":"must not be inspected"}}
+        """
+        try Data(rollout.utf8).write(to: rolloutURL)
+
+        let scanner = TerminalCodexSessionScanner(
+            sessionsRoot: sessionsRoot,
+            runProcess: { executable, _ in
+                if executable.path == "/bin/ps" {
+                    return ProcessCommandResult(
+                        data: Data("123 ttys001 /opt/bin/codex\n456 ?? /opt/bin/codex\n".utf8),
+                        terminationStatus: 0
+                    )
+                }
+                return ProcessCommandResult(
+                    data: Data("p123\nn\(rolloutURL.path)\n".utf8),
+                    terminationStatus: 0
+                )
+            }
+        )
+
+        let result = try scanner.scan()
+
+        XCTAssertEqual(result.observedSessionIDs, ["session-before-app"])
+        XCTAssertTrue(result.completedSessionIDs.isEmpty)
+        XCTAssertEqual(result.activeTasks["session-before-app"]?.turnID, "turn-active")
+        XCTAssertEqual(result.activeTasks["session-before-app"]?.codexPID, 123)
+        XCTAssertEqual(result.activeTasks["session-before-app"]?.cwd, "/project")
+        XCTAssertEqual(
+            result.activeTasks["session-before-app"]?.trackingSource,
+            .sessionScan
+        )
+    }
+
+    func testSessionScanIgnoresSubagentsOwnedByTerminalCodexProcess() throws {
+        let sessionsRoot = temporaryDirectory()
+        let rootRolloutURL = sessionsRoot.appendingPathComponent(
+            "rollout-2026-08-02T10-00-00-root.jsonl"
+        )
+        let subagentRolloutURL = sessionsRoot.appendingPathComponent(
+            "rollout-2026-08-02T10-01-00-subagent.jsonl"
+        )
+        let rootRollout = """
+        {"type":"session_meta","payload":{"id":"root","cwd":"/project","originator":"codex-tui","source":"cli"}}
+        {"type":"event_msg","payload":{"type":"task_started","turn_id":"root-turn","started_at":1234}}
+        """
+        let subagentRollout = """
+        {"type":"session_meta","payload":{"id":"subagent","cwd":"/project","originator":"codex-tui","source":{"subagent":{"thread_spawn":{"parent_thread_id":"root"}}}}}
+        {"type":"event_msg","payload":{"type":"task_started","turn_id":"subagent-turn","started_at":1235}}
+        """
+        try Data(rootRollout.utf8).write(to: rootRolloutURL)
+        try Data(subagentRollout.utf8).write(to: subagentRolloutURL)
+
+        let scanner = TerminalCodexSessionScanner(
+            sessionsRoot: sessionsRoot,
+            runProcess: { executable, _ in
+                if executable.path == "/bin/ps" {
+                    return ProcessCommandResult(
+                        data: Data("123 ttys001 /opt/bin/codex\n".utf8),
+                        terminationStatus: 0
+                    )
+                }
+                return ProcessCommandResult(
+                    data: Data(
+                        "p123\nn\(rootRolloutURL.path)\nn\(subagentRolloutURL.path)\n".utf8
+                    ),
+                    terminationStatus: 0
+                )
+            }
+        )
+
+        let result = try scanner.scan()
+
+        XCTAssertEqual(result.observedSessionIDs, ["root"])
+        XCTAssertEqual(Set(result.activeTasks.keys), ["root"])
+        XCTAssertEqual(result.activeTasks["root"]?.turnID, "root-turn")
+    }
+
+    func testSessionScanCompletionRemovesDiscoveredTask() throws {
+        let store = ActivityStore(baseDirectory: temporaryDirectory())
+        let activeTask = CodexTask(
+            sessionID: "a",
+            turnID: "turn-a",
+            cwd: "/a",
+            startedAt: Date(timeIntervalSince1970: 100),
+            codexPID: 123,
+            trackingSource: .sessionScan
+        )
+        let snapshots = [
+            CodexSessionScanResult(
+                observedSessionIDs: ["a"],
+                activeTasks: ["a": activeTask]
+            ),
+            CodexSessionScanResult(
+                observedSessionIDs: ["a"],
+                completedSessionIDs: ["a"]
+            ),
+        ]
+        var scanIndex = 0
+        let reconciler = CodexSessionReconciler(
+            store: store,
+            now: { Date(timeIntervalSince1970: 200) },
+            scan: {
+                defer { scanIndex += 1 }
+                return snapshots[scanIndex]
+            }
+        )
+
+        try reconciler.reconcile()
+        XCTAssertEqual(try store.read().busy["a"], activeTask)
+
+        try reconciler.reconcile()
+        let completedState = try store.read()
+        XCTAssertTrue(completedState.tracked.isEmpty)
+        XCTAssertEqual(
+            completedState.lastCompletedAt,
+            Date(timeIntervalSince1970: 200)
+        )
+    }
+
+    func testHookStateWinsOverSessionScanForSameTurn() throws {
+        let store = ActivityStore(baseDirectory: temporaryDirectory())
+        let hookTask = CodexTask(
+            sessionID: "a",
+            turnID: "turn-a",
+            cwd: "/a",
+            startedAt: Date(timeIntervalSince1970: 100),
+            codexPID: 123,
+            progress: .waitingForPermission
+        )
+        try store.mutate { state in
+            state.tracked["a"] = hookTask
+        }
+        let scannedTask = CodexTask(
+            sessionID: "a",
+            turnID: "turn-a",
+            cwd: "/a",
+            startedAt: Date(timeIntervalSince1970: 101),
+            codexPID: 123,
+            trackingSource: .sessionScan
+        )
+        let reconciler = CodexSessionReconciler(
+            store: store,
+            scan: {
+                CodexSessionScanResult(
+                    observedSessionIDs: ["a"],
+                    activeTasks: ["a": scannedTask]
+                )
+            }
+        )
+
+        try reconciler.reconcile()
+
+        XCTAssertEqual(try store.read().tracked["a"], hookTask)
+    }
+
     func testIdleDecisionOnlyArmsOnBusyToZeroTransition() {
         var engine = IdleDecisionEngine()
         XCTAssertEqual(engine.observe(busyCount: 0, automationEnabled: true), .none)
@@ -402,6 +565,7 @@ final class TermiNapCoreTests: XCTestCase {
         let task = try decoder.decode(CodexTask.self, from: data)
 
         XCTAssertEqual(task.progress, .running)
+        XCTAssertEqual(task.trackingSource, .hook)
     }
 
     func testPanelPlacementStaysInsideDisplayWithNegativeCoordinates() {

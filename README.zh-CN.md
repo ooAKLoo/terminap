@@ -25,6 +25,7 @@ TermiNap 按 Agent 生命周期工作：
 ## 当前能力
 
 - 通过五个生命周期 hooks 跟踪终端 Codex 的运行、等待授权、恢复和结束。
+- App 启动时会补扫已经打开的终端 Codex，并恢复其中尚未完成的 Turn。
 - 忽略没有 TTY 的 Codex/ChatGPT 桌面会话。
 - 最多显示八个任务，超出后显示 `+N`。
 - Agent 工作时使用进程级 macOS 断言，只阻止用户空闲导致的系统睡眠。
@@ -72,6 +73,7 @@ TermiNap 通过 Codex app-server 自动复检；五项全部通过后切换到�
 
 - 不需要账号。
 - 不收集提示词、源代码、项目内容或终端输出。
+- 补扫已有会话时，只读取 TTY Codex 当前持有的 rollout 中的会话 ID、工作目录、PID 和生命周期事件字段。
 - 状态保存在 `~/Library/Application Support/TermiNap/`。
 - 电源自动化默认关闭。
 - 夜班守护使用 `PreventUserIdleSystemSleep`，不会持有阻止显示器熄灭的断言。

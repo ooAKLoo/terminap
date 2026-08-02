@@ -16,6 +16,9 @@ All notable changes to TermiNap will be documented in this file.
 
 ### Fixed
 
+- Exclude Codex subagent rollout files from terminal task recovery to prevent duplicate active-task counts.
+- Recover unfinished turns from terminal Codex sessions that were already open when TermiNap launched.
+- Reliably collapse the floating panel after the pointer leaves while its frame is animating.
 - Restore the floating panel to its previous external display and relative position after display topology changes.
 - Expand upward near the screen's bottom edge while keeping the battery meter fixed and revealing content from bottom to top.
 - Treat tasks blocked on user permission as paused progress instead of keeping the Mac awake indefinitely.
@@ -25,7 +28,7 @@ All notable changes to TermiNap will be documented in this file.
 
 ### Verified
 
-- Unit coverage for wake policy, permission pause/resume, settings migration, hook installation, idempotent acquisition, error handling, and deinitialization cleanup.
+- Unit coverage for existing-session recovery, wake policy, permission pause/resume, settings migration, hook installation, idempotent acquisition, error handling, and deinitialization cleanup.
 - Live macOS `pmset -g assertions` verification confirms display sleep remains unblocked and the TermiNap assertion disappears after process termination.
 
 ## 0.1.0 — 2026-07-29

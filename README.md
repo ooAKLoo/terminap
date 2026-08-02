@@ -25,6 +25,7 @@ TermiNap is designed around the agent lifecycle:
 ## Current features
 
 - Tracks terminal Codex running, permission-wait, resume, and completion states through five lifecycle hooks.
+- Recovers unfinished turns from live terminal Codex sessions that were already open when TermiNap launched.
 - Ignores Codex/ChatGPT desktop sessions without a TTY.
 - Shows up to eight active tasks, with a `+N` overflow indicator.
 - Uses a process-scoped macOS assertion to prevent only user-idle system sleep while agents work.
@@ -72,6 +73,7 @@ TermiNap checks the trust state through the Codex app-server and switches to the
 
 - No account is required.
 - No prompts, source code, project contents, or terminal output are collected.
+- Existing-session recovery reads only the session ID, working directory, PID, and lifecycle event fields from rollout files currently held by TTY Codex processes.
 - State is stored under `~/Library/Application Support/TermiNap/`.
 - Power automation is off by default.
 - The wake guard uses `PreventUserIdleSystemSleep`; it does not hold a display-sleep assertion.

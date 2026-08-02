@@ -25,6 +25,7 @@ final class AppModel: ObservableObject {
     private let activityStore: ActivityStore
     private let settingsStore: SettingsStore
     private let staleTaskPruner: HookProcessor
+    private let sessionReconciler: CodexSessionReconciler
     private let idleSleepAssertionController: IdleSleepAssertionController
     private let hookTrustChecker = CodexHookTrustChecker()
     private var decisionEngine = IdleDecisionEngine()
@@ -36,6 +37,7 @@ final class AppModel: ObservableObject {
     private var appExecutablePath: String?
     private var codexExecutableURL: URL?
     private var pollCount = 0
+    private var isReconcilingSessions = false
 
     init(
         activityStore: ActivityStore = ActivityStore(),
@@ -47,6 +49,7 @@ final class AppModel: ObservableObject {
         self.settingsStore = settingsStore
         self.idleSleepAssertionController = idleSleepAssertionController
         staleTaskPruner = HookProcessor(store: activityStore)
+        sessionReconciler = CodexSessionReconciler(store: activityStore)
         settings = (try? settingsStore.read()) ?? BatterySettings()
         refresh()
         pollTimer = Timer.scheduledTimer(
@@ -346,6 +349,9 @@ final class AppModel: ObservableObject {
             if pollCount == 1 || pollCount.isMultiple(of: 10) {
                 try staleTaskPruner.pruneStaleTasks()
             }
+            if pollCount == 1 || pollCount.isMultiple(of: 10) {
+                reconcileExistingSessions()
+            }
             let state = try activityStore.read()
             tasks = state.busy.values.sorted { $0.startedAt < $1.startedAt }
             waitingForPermissionTasks = state.waitingForPermission.values.sorted {
@@ -369,6 +375,20 @@ final class AppModel: ObservableObject {
         } catch {
             releaseWakeGuard()
             lastError = error.localizedDescription
+        }
+    }
+
+    private func reconcileExistingSessions() {
+        guard !isReconcilingSessions else {
+            return
+        }
+        isReconcilingSessions = true
+        let reconciler = sessionReconciler
+        Task {
+            _ = await Task.detached(priority: .utility) {
+                try? reconciler.reconcile()
+            }.value
+            isReconcilingSessions = false
         }
     }
 

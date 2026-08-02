@@ -181,32 +181,69 @@ final class FloatingPanel: NSPanel {
 final class HoverHostingView<Content: View>: NSHostingView<Content> {
     var onHoverChange: ((Bool) -> Void)?
     private var hoverTrackingArea: NSTrackingArea?
+    private var pointerIsInside = false
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        guard hoverTrackingArea == nil else {
-            return
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
         }
         let trackingArea = NSTrackingArea(
-            rect: .zero,
+            rect: bounds,
             options: [
                 .mouseEnteredAndExited,
                 .activeAlways,
-                .inVisibleRect,
+                .enabledDuringMouseDrag,
             ],
             owner: self,
             userInfo: nil
         )
         addTrackingArea(trackingArea)
         hoverTrackingArea = trackingArea
+        synchronizePointerLocation()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        DispatchQueue.main.async { [weak self] in
+            self?.synchronizePointerLocation()
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        synchronizePointerLocation()
     }
 
     override func mouseEntered(with event: NSEvent) {
-        onHoverChange?(true)
+        setPointerInside(true)
     }
 
     override func mouseExited(with event: NSEvent) {
-        onHoverChange?(false)
+        setPointerInside(false)
+    }
+
+    private func synchronizePointerLocation() {
+        guard let window, window.isVisible else {
+            setPointerInside(false)
+            return
+        }
+        let locationInWindow = window.convertPoint(
+            fromScreen: NSEvent.mouseLocation
+        )
+        let location = convert(
+            locationInWindow,
+            from: nil
+        )
+        setPointerInside(bounds.contains(location))
+    }
+
+    private func setPointerInside(_ isInside: Bool) {
+        guard pointerIsInside != isInside else {
+            return
+        }
+        pointerIsInside = isInside
+        onHoverChange?(isInside)
     }
 }
 

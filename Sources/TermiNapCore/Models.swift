@@ -89,6 +89,11 @@ public enum CodexTaskProgress: String, Codable, Equatable {
     case waitingForPermission
 }
 
+public enum CodexTaskTrackingSource: String, Codable, Equatable {
+    case hook
+    case sessionScan
+}
+
 public struct CodexTask: Codable, Equatable, Identifiable {
     public let sessionID: String
     public let turnID: String
@@ -96,6 +101,7 @@ public struct CodexTask: Codable, Equatable, Identifiable {
     public let startedAt: Date
     public let codexPID: Int32?
     public let progress: CodexTaskProgress
+    public let trackingSource: CodexTaskTrackingSource
 
     public var id: String { sessionID }
 
@@ -105,7 +111,8 @@ public struct CodexTask: Codable, Equatable, Identifiable {
         cwd: String?,
         startedAt: Date = Date(),
         codexPID: Int32? = nil,
-        progress: CodexTaskProgress = .running
+        progress: CodexTaskProgress = .running,
+        trackingSource: CodexTaskTrackingSource = .hook
     ) {
         self.sessionID = sessionID
         self.turnID = turnID
@@ -113,6 +120,7 @@ public struct CodexTask: Codable, Equatable, Identifiable {
         self.startedAt = startedAt
         self.codexPID = codexPID
         self.progress = progress
+        self.trackingSource = trackingSource
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -122,6 +130,7 @@ public struct CodexTask: Codable, Equatable, Identifiable {
         case startedAt
         case codexPID
         case progress
+        case trackingSource
     }
 
     public init(from decoder: Decoder) throws {
@@ -135,6 +144,10 @@ public struct CodexTask: Codable, Equatable, Identifiable {
             CodexTaskProgress.self,
             forKey: .progress
         ) ?? .running
+        trackingSource = try container.decodeIfPresent(
+            CodexTaskTrackingSource.self,
+            forKey: .trackingSource
+        ) ?? .hook
     }
 }
 
