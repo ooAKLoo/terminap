@@ -2,6 +2,8 @@
 
 本文面向产品负责人、设计和增长执行者，用于把当前的 TermiNap 原型推进为可公开下载、可验证价值并可持续传播的 macOS 产品。文档同时记录产品承诺边界，避免在关键能力完成前发布无法兑现的营销表述。
 
+Reddit 首轮需求验证、评论追问、Beta 邀请和判断阈值见 [`REDDIT_VALIDATION_PLAN.md`](REDDIT_VALIDATION_PLAN.md)。
+
 - 文档状态：初稿，可执行
 - 更新日期：2026-07-29
 - 当前产品版本：TermiNap 0.2.0
@@ -183,6 +185,8 @@ TermiNap 由 Terminal 与 Nap 组合而成，既指向终端 Agent，也表达�
 - 公开隐私说明、卸载步骤和签名验证方式。
 
 ## 制作发布素材
+
+初始界面问题与重设计方向的视觉对照稿已归档至 [`docs/DESIGN_REFERENCES.md`](docs/DESIGN_REFERENCES.md)。该稿用于设计讨论，不代表当前功能已经实现。
 
 ### 12 秒主演示
 
