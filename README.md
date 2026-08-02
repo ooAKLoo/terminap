@@ -20,6 +20,7 @@ TermiNap is designed around the agent lifecycle:
 - A Codex permission wait is treated as paused progress instead of an active task.
 - The last completed task starts a cancelable countdown.
 - A new task cancels the pending power action.
+- The night-shift switch is consumed after one completed power action, so it cannot trigger again after wake or restart.
 - All activity and settings stay on the Mac.
 
 ## Current features
@@ -76,6 +77,7 @@ TermiNap checks the trust state through the Codex app-server and switches to the
 - Existing-session recovery reads only the session ID, working directory, PID, and lifecycle event fields from rollout files currently held by TTY Codex processes.
 - State is stored under `~/Library/Application Support/TermiNap/`.
 - Power automation is off by default.
+- Each enablement is one-shot and is persisted as disabled before display sleep, system sleep, or shutdown is requested.
 - The wake guard uses `PreventUserIdleSystemSleep`; it does not hold a display-sleep assertion.
 - The assertion belongs to the TermiNap process, so macOS removes it if the app crashes or is killed.
 - Shutdown requires a second confirmation and a cancelable countdown.

@@ -435,8 +435,19 @@ final class AppModel: ObservableObject {
         guard settings.enabled, tasks.isEmpty else {
             return
         }
+
+        // Completion actions are deliberately one-shot. Persist the disabled
+        // state before asking macOS to sleep or shut down because this process
+        // may be suspended or terminated as soon as the action is launched.
+        let action = settings.action
+        var next = settings
+        next.enabled = false
+        guard persist(next) else {
+            return
+        }
+
         do {
-            try PowerController.execute(settings.action)
+            try PowerController.execute(action)
         } catch {
             lastError = error.localizedDescription
         }

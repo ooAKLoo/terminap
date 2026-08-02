@@ -550,7 +550,7 @@ struct BatteryView: View {
                 return "等待授权不计入活跃任务"
             }
             return model.settings.enabled
-                ? "夜班守护已开启 · 等待下一批任务"
+                ? "本次夜班守护已开启 · 等待任务"
                 : "Agent 夜班守护目前关闭"
         }
         if model.busyCount > 8 {
@@ -606,7 +606,7 @@ struct BatteryView: View {
             HStack(spacing: 9) {
                 Image(systemName: model.settings.enabled ? "power.circle.fill" : "power.circle")
                     .font(.system(size: 16, weight: .semibold))
-                Text(model.settings.enabled ? "Agent 夜班守护已开启" : "打开 Agent 夜班守护")
+                Text(model.settings.enabled ? "本次夜班守护已开启" : "打开本次夜班守护")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                 Spacer()
                 Text(model.settings.enabled ? "ON" : "OFF")
@@ -626,7 +626,7 @@ struct BatteryView: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(model.settings.enabled ? "关闭 Agent 夜班守护" : "打开 Agent 夜班守护")
+        .accessibilityLabel(model.settings.enabled ? "关闭本次夜班守护" : "打开本次夜班守护")
     }
 }
 

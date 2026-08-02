@@ -16,6 +16,7 @@ All notable changes to TermiNap will be documented in this file.
 
 ### Fixed
 
+- Make night-shift automation one-shot and disable it before executing a power action, preventing an unintended second trigger after wake or restart.
 - Exclude Codex subagent rollout files from terminal task recovery to prevent duplicate active-task counts.
 - Recover unfinished turns from terminal Codex sessions that were already open when TermiNap launched.
 - Reliably collapse the floating panel after the pointer leaves while its frame is animating.
