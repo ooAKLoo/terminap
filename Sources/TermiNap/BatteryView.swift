@@ -536,7 +536,7 @@ struct BatteryView: View {
         if model.isPreventingIdleSleep {
             if model.busyCount == 0 {
                 if model.waitingForPermissionCount > 0 {
-                    return "等待授权已按暂停推进处理"
+                    return "等待授权中 · Mac 保持唤醒"
                 }
                 return "收尾倒计时中 · Mac 保持唤醒"
             }

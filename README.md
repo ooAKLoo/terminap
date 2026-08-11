@@ -17,8 +17,8 @@ TermiNap is designed around the agent lifecycle:
 - One active terminal task equals one battery segment.
 - Multiple Codex terminals are tracked together.
 - While at least one tracked task is active, macOS stays awake but the display may turn off normally.
-- A Codex permission wait is treated as paused progress instead of an active task.
-- The last completed task starts a cancelable countdown.
+- A Codex permission wait is shown as paused progress, but remains unfinished and keeps the system awake.
+- After every tracked task has truly finished, a cancelable five-minute countdown starts.
 - A new task cancels the pending power action.
 - The night-shift switch is consumed after one completed power action, so it cannot trigger again after wake or restart.
 - All activity and settings stay on the Mac.
@@ -30,7 +30,7 @@ TermiNap is designed around the agent lifecycle:
 - Ignores Codex/ChatGPT desktop sessions without a TTY.
 - Shows up to eight active tasks, with a `+N` overflow indicator.
 - Uses a process-scoped macOS assertion to prevent only user-idle system sleep while agents work.
-- Keeps the assertion through the completion countdown, then releases it before the selected power action.
+- Keeps the assertion while tasks remain and through the five-minute completion countdown, then rechecks task state and releases it before the selected power action.
 - Releases the assertion on disable, state-read failure, stale sessions, normal exit, and process termination.
 - Supports display sleep, system sleep, and shutdown.
 - Requires an explicit confirmation before enabling shutdown.
@@ -80,7 +80,7 @@ TermiNap checks the trust state through the Codex app-server and switches to the
 - Each enablement is one-shot and is persisted as disabled before display sleep, system sleep, or shutdown is requested.
 - The wake guard uses `PreventUserIdleSystemSleep`; it does not hold a display-sleep assertion.
 - The assertion belongs to the TermiNap process, so macOS removes it if the app crashes or is killed.
-- Shutdown requires a second confirmation and a cancelable countdown.
+- Shutdown requires a second confirmation and a cancelable five-minute countdown.
 
 For development, set `TERMINAP_DRY_RUN=1` before launching the executable. Power actions will be written to `dry-run.log` instead of being executed.
 

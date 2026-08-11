@@ -22,9 +22,10 @@ All notable changes to TermiNap will be documented in this file.
 - Reliably collapse the floating panel after the pointer leaves while its frame is animating.
 - Restore the floating panel to its previous external display and relative position after display topology changes.
 - Expand upward near the screen's bottom edge while keeping the battery meter fixed and revealing content from bottom to top.
-- Treat tasks blocked on user permission as paused progress instead of keeping the Mac awake indefinitely.
+- Keep permission-waiting tasks marked as unfinished so they cannot trigger a premature power action.
 - Restore task tracking after an approved tool returns.
-- Migrate the completion grace period from 15 to 30 seconds.
+- Migrate the legacy 15- or 30-second completion grace period to five minutes.
+- Recheck persisted task state when the countdown reaches zero to avoid a polling race with a newly resumed task.
 - Keep a live Codex process tracked beyond the 24-hour stale-state fallback.
 
 ### Verified

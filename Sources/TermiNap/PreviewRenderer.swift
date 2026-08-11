@@ -37,7 +37,7 @@ func renderPreview(
         BatterySettings(
             enabled: enabled,
             action: .systemSleep,
-            delaySeconds: 30
+            delaySeconds: BatterySettings.defaultDelaySeconds
         )
     )
 

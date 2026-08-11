@@ -31,7 +31,9 @@ public enum PowerAction: String, Codable, CaseIterable, Identifiable {
 }
 
 public struct BatterySettings: Codable, Equatable {
-    private static let currentSchemaVersion = 2
+    private static let currentSchemaVersion = 3
+
+    public static let defaultDelaySeconds = 5 * 60
 
     public var enabled: Bool
     public var action: PowerAction
@@ -40,7 +42,7 @@ public struct BatterySettings: Codable, Equatable {
     public init(
         enabled: Bool = false,
         action: PowerAction = .systemSleep,
-        delaySeconds: Int = 30
+        delaySeconds: Int = Self.defaultDelaySeconds
     ) {
         self.enabled = enabled
         self.action = action
@@ -65,11 +67,15 @@ public struct BatterySettings: Codable, Equatable {
         let storedDelay = try container.decodeIfPresent(
             Int.self,
             forKey: .delaySeconds
-        ) ?? 30
-        delaySeconds = schemaVersion < Self.currentSchemaVersion
-            && storedDelay == 15
-            ? 30
-            : storedDelay
+        )
+        switch (schemaVersion, storedDelay) {
+        case (_, nil):
+            delaySeconds = Self.defaultDelaySeconds
+        case (..<2, 15), (2, 30):
+            delaySeconds = Self.defaultDelaySeconds
+        case let (_, storedDelay?):
+            delaySeconds = storedDelay
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -218,22 +224,28 @@ public enum IdleDecision: Equatable {
 }
 
 public struct IdleDecisionEngine {
-    private var previousBusyCount: Int?
+    private var previousTrackedTaskCount: Int?
 
     public init() {}
 
-    public mutating func observe(busyCount: Int, automationEnabled: Bool) -> IdleDecision {
-        defer { previousBusyCount = busyCount }
+    public mutating func observe(
+        trackedTaskCount: Int,
+        automationEnabled: Bool
+    ) -> IdleDecision {
+        defer { previousTrackedTaskCount = trackedTaskCount }
 
-        guard let previousBusyCount else {
+        guard let previousTrackedTaskCount else {
             return .none
         }
 
-        if busyCount > 0 {
+        if trackedTaskCount > 0 {
             return .cancel
         }
 
-        if previousBusyCount > 0, busyCount == 0, automationEnabled {
+        if previousTrackedTaskCount > 0,
+            trackedTaskCount == 0,
+            automationEnabled
+        {
             return .arm
         }
 

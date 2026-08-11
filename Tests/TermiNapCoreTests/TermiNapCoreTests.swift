@@ -314,40 +314,55 @@ final class TermiNapCoreTests: XCTestCase {
         XCTAssertEqual(try store.read().tracked["a"], hookTask)
     }
 
-    func testIdleDecisionOnlyArmsOnBusyToZeroTransition() {
+    func testIdleDecisionOnlyArmsOnTrackedTasksToZeroTransition() {
         var engine = IdleDecisionEngine()
-        XCTAssertEqual(engine.observe(busyCount: 0, automationEnabled: true), .none)
-        XCTAssertEqual(engine.observe(busyCount: 2, automationEnabled: true), .cancel)
-        XCTAssertEqual(engine.observe(busyCount: 1, automationEnabled: true), .cancel)
-        XCTAssertEqual(engine.observe(busyCount: 0, automationEnabled: true), .arm)
-        XCTAssertEqual(engine.observe(busyCount: 0, automationEnabled: true), .none)
+        XCTAssertEqual(
+            engine.observe(trackedTaskCount: 0, automationEnabled: true),
+            .none
+        )
+        XCTAssertEqual(
+            engine.observe(trackedTaskCount: 2, automationEnabled: true),
+            .cancel
+        )
+        XCTAssertEqual(
+            engine.observe(trackedTaskCount: 1, automationEnabled: true),
+            .cancel
+        )
+        XCTAssertEqual(
+            engine.observe(trackedTaskCount: 0, automationEnabled: true),
+            .arm
+        )
+        XCTAssertEqual(
+            engine.observe(trackedTaskCount: 0, automationEnabled: true),
+            .none
+        )
     }
 
     func testWakeGuardPolicyCoversWorkAndCompletionCountdown() {
         XCTAssertTrue(
             WakeGuardPolicy.shouldPreventIdleSleep(
-                busyCount: 2,
+                trackedTaskCount: 2,
                 automationEnabled: true,
                 countdownActive: false
             )
         )
         XCTAssertTrue(
             WakeGuardPolicy.shouldPreventIdleSleep(
-                busyCount: 0,
+                trackedTaskCount: 0,
                 automationEnabled: true,
                 countdownActive: true
             )
         )
         XCTAssertFalse(
             WakeGuardPolicy.shouldPreventIdleSleep(
-                busyCount: 2,
+                trackedTaskCount: 2,
                 automationEnabled: false,
                 countdownActive: true
             )
         )
         XCTAssertFalse(
             WakeGuardPolicy.shouldPreventIdleSleep(
-                busyCount: 0,
+                trackedTaskCount: 0,
                 automationEnabled: true,
                 countdownActive: false
             )
@@ -535,17 +550,24 @@ final class TermiNapCoreTests: XCTestCase {
         )
     }
 
-    func testMigratesLegacyFifteenSecondCountdownToThirtySeconds() throws {
+    func testDefaultsToFiveMinuteCountdown() {
+        XCTAssertEqual(
+            BatterySettings().delaySeconds,
+            BatterySettings.defaultDelaySeconds
+        )
+    }
+
+    func testMigratesLegacyFifteenSecondCountdownToFiveMinutes() throws {
         let data = Data(
             #"{"enabled":true,"action":"systemSleep","delaySeconds":15}"#.utf8
         )
 
         let settings = try JSONDecoder().decode(BatterySettings.self, from: data)
 
-        XCTAssertEqual(settings.delaySeconds, 30)
+        XCTAssertEqual(settings.delaySeconds, 300)
     }
 
-    func testKeepsExplicitCurrentSchemaCountdown() throws {
+    func testKeepsExplicitPreviousSchemaCountdown() throws {
         let data = Data(
             #"{"schemaVersion":2,"enabled":true,"action":"systemSleep","delaySeconds":15}"#.utf8
         )
@@ -553,6 +575,26 @@ final class TermiNapCoreTests: XCTestCase {
         let settings = try JSONDecoder().decode(BatterySettings.self, from: data)
 
         XCTAssertEqual(settings.delaySeconds, 15)
+    }
+
+    func testMigratesThirtySecondCountdownToFiveMinutes() throws {
+        let data = Data(
+            #"{"schemaVersion":2,"enabled":true,"action":"systemSleep","delaySeconds":30}"#.utf8
+        )
+
+        let settings = try JSONDecoder().decode(BatterySettings.self, from: data)
+
+        XCTAssertEqual(settings.delaySeconds, 300)
+    }
+
+    func testKeepsExplicitCurrentSchemaCountdown() throws {
+        let data = Data(
+            #"{"schemaVersion":3,"enabled":true,"action":"systemSleep","delaySeconds":30}"#.utf8
+        )
+
+        let settings = try JSONDecoder().decode(BatterySettings.self, from: data)
+
+        XCTAssertEqual(settings.delaySeconds, 30)
     }
 
     func testLegacyTaskStateDefaultsToRunning() throws {

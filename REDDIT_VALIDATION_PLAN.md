@@ -103,7 +103,7 @@ TermiNap 需要验证的差异是：用户睡前无法放心离开的具体原�
 
 ### 5. Permission 的期望处理
 
-TermiNap 当前将 Permission 等待视为“不再自主推进”，不计入活跃任务；当所有任务都等待授权时，会进入倒计时。这是产品定义，不代表用户一定认同。
+TermiNap 当前将 Permission 等待视为“不再自主推进”，不计入活跃电量，但仍视为未结束任务并保持系统唤醒；只有任务真正结束后才会进入倒计时。这是产品定义，不代表用户一定认同。
 
 必须直接验证：
 
@@ -186,7 +186,7 @@ I’m prototyping a very small Mac utility around this, but I’m not posting a 
 ```text
 A little more context on what I’m testing:
 
-The prototype watches local terminal Codex lifecycle events. It lets the display turn off, only prevents system idle sleep while at least one task is still actively progressing, and starts a short cancelable countdown when no active task is left.
+The prototype watches local terminal Codex lifecycle events. It lets the display turn off, prevents system idle sleep while any tracked task remains unfinished, and starts a five-minute cancelable countdown after the last task truly finishes.
 
 It doesn’t read prompts, code, project contents, or terminal output. The first build is Codex-only.
 
@@ -326,7 +326,7 @@ The answers split into a few groups. Some people already use Codex’s prevent-s
 
 I built a small prototype around the second group.
 
-It watches local terminal Codex lifecycle events, keeps the system awake only while at least one task is still progressing, and starts a cancelable countdown when the last active task is gone. The display can still turn off normally.
+It watches local terminal Codex lifecycle events, keeps the system awake while any tracked task remains unfinished, and starts a cancelable five-minute countdown after the last task truly finishes. The display can still turn off normally.
 
 It doesn’t read prompts, source code, project contents, or terminal output.
 
@@ -345,7 +345,7 @@ If this is already fully solved by your setup, I’d also like to hear that.
 | --- | --- | --- |
 | 0～3 秒 | 两个终端 Codex 任务启动，TermiNap 显示两格电量 | 多任务与生命周期识别 |
 | 3～6 秒 | 一个任务结束，电量减少一格 | 单任务完成不会过早收尾 |
-| 6～9 秒 | 最后一个任务结束，出现 30 秒倒计时 | 所有任务归零后的自动收尾 |
+| 6～9 秒 | 最后一个任务结束，出现 5 分钟倒计时 | 所有任务归零后的自动收尾 |
 | 9～12 秒 | 新任务启动，倒计时取消，电量重新增加 | 新任务安全取消电源动作 |
 
 录屏必须展示真实产品行为，不使用只表达概念的设计效果图。

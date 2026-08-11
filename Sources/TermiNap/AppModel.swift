@@ -77,6 +77,10 @@ final class AppModel: ObservableObject {
         waitingForPermissionTasks.count
     }
 
+    var trackedTaskCount: Int {
+        busyCount + waitingForPermissionCount
+    }
+
     var statusText: String {
         if busyCount == 0 {
             if waitingForPermissionCount > 0 {
@@ -93,6 +97,14 @@ final class AppModel: ObservableObject {
     var countdownText: String? {
         guard let countdown else {
             return nil
+        }
+        if countdown >= 60 {
+            let minutes = countdown / 60
+            let seconds = countdown % 60
+            let duration = seconds == 0
+                ? "\(minutes) 分钟"
+                : "\(minutes) 分 \(seconds) 秒"
+            return "\(duration)后\(settings.action.title)"
         }
         return "\(countdown) 秒后\(settings.action.title)"
     }
@@ -358,7 +370,7 @@ final class AppModel: ObservableObject {
                 $0.startedAt < $1.startedAt
             }
             let decision = decisionEngine.observe(
-                busyCount: tasks.count,
+                trackedTaskCount: trackedTaskCount,
                 automationEnabled: settings.enabled
             )
             switch decision {
@@ -394,7 +406,7 @@ final class AppModel: ObservableObject {
 
     private func armCountdown() {
         clearCountdownState()
-        guard settings.enabled, tasks.isEmpty else {
+        guard settings.enabled, trackedTaskCount == 0 else {
             synchronizeWakeGuard()
             return
         }
@@ -430,9 +442,23 @@ final class AppModel: ObservableObject {
             return
         }
 
+        do {
+            let latestState = try activityStore.read()
+            guard latestState.tracked.isEmpty else {
+                clearCountdownState()
+                refresh()
+                return
+            }
+        } catch {
+            clearCountdownState()
+            releaseWakeGuard()
+            lastError = error.localizedDescription
+            return
+        }
+
         clearCountdownState()
         synchronizeWakeGuard()
-        guard settings.enabled, tasks.isEmpty else {
+        guard settings.enabled, trackedTaskCount == 0 else {
             return
         }
 
@@ -456,7 +482,7 @@ final class AppModel: ObservableObject {
     @discardableResult
     private func synchronizeWakeGuard() -> Bool {
         let shouldPrevent = WakeGuardPolicy.shouldPreventIdleSleep(
-            busyCount: tasks.count,
+            trackedTaskCount: trackedTaskCount,
             automationEnabled: settings.enabled,
             countdownActive: countdown != nil
         )
