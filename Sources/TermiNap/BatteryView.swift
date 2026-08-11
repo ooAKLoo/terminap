@@ -106,6 +106,7 @@ struct BatteryView: View {
     static let panelWidth: CGFloat = 300
     static let collapsedHeight: CGFloat = 104
     static let dashboardExpandedHeight: CGFloat = 330
+    static let recoveryExpandedHeight: CGFloat = 456
     static let setupExpandedHeight: CGFloat = 490
 
     @ObservedObject var model: AppModel
@@ -195,6 +196,7 @@ struct BatteryView: View {
 
                 BatteryMeter(
                     activeCount: model.busyCount,
+                    interruptedCount: model.interruptedTaskCount,
                     onDragEnded: onDragEnded
                 )
                 .padding(PanelLayout.padding)
@@ -240,8 +242,17 @@ struct BatteryView: View {
             onPreferredHeightChange(
                 shouldShowSetup
                     ? Self.setupExpandedHeight
-                    : Self.dashboardExpandedHeight
+                    : expandedHeight
             )
+        }
+        .onChange(of: model.interruptedTaskCount) { _ in
+            guard
+                presentation.isPanelExpanded,
+                !model.shouldShowHookSetup
+            else {
+                return
+            }
+            onPreferredHeightChange(expandedHeight)
         }
         .onChange(of: confirmingShutdown) { isConfirming in
             presentation.setInteractionLocked(isConfirming)
@@ -258,9 +269,13 @@ struct BatteryView: View {
     }
 
     private var expandedHeight: CGFloat {
-        model.shouldShowHookSetup
-            ? Self.setupExpandedHeight
-            : Self.dashboardExpandedHeight
+        if model.shouldShowHookSetup {
+            return Self.setupExpandedHeight
+        }
+        if model.interruptedTaskCount > 0 {
+            return Self.recoveryExpandedHeight
+        }
+        return Self.dashboardExpandedHeight
     }
 
     @ViewBuilder
@@ -331,7 +346,7 @@ struct BatteryView: View {
     }
 
     private var headerIndicatorColor: Color {
-        if model.shouldShowHookSetup {
+        if model.shouldShowHookSetup || model.interruptedTaskCount > 0 {
             return Palette.warning
         }
         return model.busyCount > 0 ? Palette.accent : Palette.secondary
@@ -349,6 +364,7 @@ struct BatteryView: View {
                     .lineLimit(1)
             }
 
+            interruptionRecovery
             actionPicker
             automationButton
 
@@ -372,6 +388,97 @@ struct BatteryView: View {
                     .lineLimit(1)
             }
         }
+    }
+
+    @ViewBuilder
+    private var interruptionRecovery: some View {
+        if let task = model.interruptedTasks.first {
+            VStack(alignment: .leading, spacing: 11) {
+                HStack(alignment: .top, spacing: 9) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Palette.warning)
+                        .frame(width: 18, height: 18)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(interruptedTaskLabel(task))
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(Palette.primary)
+                        Text("Codex 进程已退出 · 会话仍可恢复")
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundStyle(Palette.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    if model.interruptedTaskCount > 1 {
+                        Text("+\(model.interruptedTaskCount - 1)")
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .foregroundStyle(Palette.warning)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Button {
+                        model.resumeInterruptedTask(task)
+                    } label: {
+                        HStack(spacing: 6) {
+                            if model.isResuming(task) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(Color.black.opacity(0.76))
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                            Text(
+                                model.isResuming(task)
+                                    ? "正在打开 Terminal…"
+                                    : "恢复任务"
+                            )
+                        }
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.black.opacity(0.82))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 34)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Palette.accent)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.isResuming(task))
+                    .accessibilityLabel("恢复中断的 Codex 任务")
+
+                    Button("结束跟踪") {
+                        model.stopTrackingInterruptedTask(task)
+                    }
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Palette.secondary)
+                    .buttonStyle(.plain)
+                    .disabled(model.isResuming(task))
+                    .accessibilityHint("不恢复该任务，并允许进入收尾倒计时")
+                }
+            }
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Palette.warning.opacity(0.07))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Palette.warning.opacity(0.28), lineWidth: 1)
+            )
+        }
+    }
+
+    private func interruptedTaskLabel(_ task: CodexTask) -> String {
+        guard let cwd = task.cwd, !cwd.isEmpty else {
+            return "Codex 会话 \(task.sessionID.prefix(8))"
+        }
+        let project = URL(fileURLWithPath: cwd).lastPathComponent
+        return project.isEmpty ? cwd : project
     }
 
     private var hookSetup: some View {
@@ -534,6 +641,9 @@ struct BatteryView: View {
 
     private var detailText: String {
         if model.isPreventingIdleSleep {
+            if model.interruptedTaskCount > 0 {
+                return "Mac 保持唤醒 · \(model.interruptedTaskCount) 个任务待恢复"
+            }
             if model.busyCount == 0 {
                 if model.waitingForPermissionCount > 0 {
                     return "等待授权中 · Mac 保持唤醒"
@@ -544,6 +654,9 @@ struct BatteryView: View {
                 return "Mac 保持唤醒 · \(model.waitingForPermissionCount) 个等待授权"
             }
             return "Mac 保持唤醒 · 屏幕仍可自动熄灭"
+        }
+        if model.interruptedTaskCount > 0 {
+            return "未执行收尾动作 · Mac 可正常休眠"
         }
         if model.busyCount == 0 {
             if model.waitingForPermissionCount > 0 {
@@ -602,7 +715,9 @@ struct BatteryView: View {
     }
 
     private var automationButton: some View {
-        Button(action: model.toggleAutomation) {
+        let isPrimary = model.settings.enabled
+            && model.interruptedTaskCount == 0
+        return Button(action: model.toggleAutomation) {
             HStack(spacing: 9) {
                 Image(systemName: model.settings.enabled ? "power.circle.fill" : "power.circle")
                     .font(.system(size: 16, weight: .semibold))
@@ -613,16 +728,16 @@ struct BatteryView: View {
                     .font(.system(size: 9, weight: .black, design: .rounded))
                     .tracking(0.7)
             }
-            .foregroundStyle(model.settings.enabled ? Color.black.opacity(0.82) : Palette.primary)
+            .foregroundStyle(isPrimary ? Color.black.opacity(0.82) : Palette.primary)
             .padding(.horizontal, 14)
             .frame(height: 44)
             .background(
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(model.settings.enabled ? Palette.accent : Palette.raised)
+                    .fill(isPrimary ? Palette.accent : Palette.raised)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .stroke(model.settings.enabled ? Color.clear : Palette.border, lineWidth: 1)
+                    .stroke(isPrimary ? Color.clear : Palette.border, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -659,6 +774,7 @@ private struct SetupRow: View {
 
 private struct BatteryMeter: View {
     let activeCount: Int
+    let interruptedCount: Int
     let onDragEnded: () -> Void
     private let segmentCount = 8
 
@@ -705,8 +821,23 @@ private struct BatteryMeter: View {
                     .background(Capsule().fill(Palette.warning))
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if interruptedCount > 0 {
+                Image(systemName: "exclamationmark")
+                    .font(.system(size: 9, weight: .black))
+                    .foregroundStyle(Color.black.opacity(0.78))
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(Palette.warning))
+                    .padding(.trailing, 12)
+                    .padding(.top, 5)
+            }
+        }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(activeCount) 个 Codex 任务正在进行")
+        .accessibilityLabel(
+            interruptedCount > 0
+                ? "\(activeCount) 个 Codex 任务正在进行，\(interruptedCount) 个任务等待恢复"
+                : "\(activeCount) 个 Codex 任务正在进行"
+        )
         .overlay {
             WindowDragHandle(onDragEnded: onDragEnded)
                 .accessibilityHidden(true)

@@ -12,10 +12,16 @@ public enum HookKind: String {
 public struct CodexProcessContext: Equatable {
     public let pid: Int32?
     public let tty: String
+    public let executablePath: String?
 
-    public init(pid: Int32?, tty: String) {
+    public init(
+        pid: Int32?,
+        tty: String,
+        executablePath: String? = nil
+    ) {
         self.pid = pid
         self.tty = tty
+        self.executablePath = executablePath
     }
 }
 
@@ -37,7 +43,11 @@ public enum TerminalCodexDetector {
                 guard snapshot.tty != "??", snapshot.tty != "-", !snapshot.tty.isEmpty else {
                     return nil
                 }
-                return CodexProcessContext(pid: pid, tty: snapshot.tty)
+                return CodexProcessContext(
+                    pid: pid,
+                    tty: snapshot.tty,
+                    executablePath: snapshot.command
+                )
             }
             guard snapshot.parentPID > 1, snapshot.parentPID != pid else {
                 break
@@ -113,6 +123,7 @@ public final class HookProcessor {
     private let now: () -> Date
     private let terminalContext: () -> CodexProcessContext?
     private let processIsAlive: (Int32) -> Bool
+    private let completionEvidence: (CodexTask) -> Bool?
     private let maximumBusyAge: TimeInterval
 
     public init(
@@ -120,12 +131,19 @@ public final class HookProcessor {
         now: @escaping () -> Date = Date.init,
         terminalContext: @escaping () -> CodexProcessContext? = TerminalCodexDetector.detect,
         processIsAlive: @escaping (Int32) -> Bool = HookProcessor.defaultProcessIsAlive,
+        completionEvidence: ((CodexTask) -> Bool?)? = nil,
         maximumBusyAge: TimeInterval = 86_400
     ) {
         self.store = store
         self.now = now
         self.terminalContext = terminalContext
         self.processIsAlive = processIsAlive
+        if let completionEvidence {
+            self.completionEvidence = completionEvidence
+        } else {
+            let inspector = CodexSessionLifecycleInspector()
+            self.completionEvidence = inspector.hasCompletionEvent
+        }
         self.maximumBusyAge = maximumBusyAge
     }
 
@@ -146,10 +164,11 @@ public final class HookProcessor {
 
     public func pruneStaleTasks() throws {
         try store.mutate { state in
-            let countBefore = state.tracked.count
-            prune(&state)
-            if state.tracked.count != countBefore {
+            let result = prune(&state)
+            if result.removedTask {
                 state.lastCompletedAt = now()
+            }
+            if result.changed {
                 state.revision &+= 1
             }
         }
@@ -171,7 +190,8 @@ public final class HookProcessor {
                 turnID: turnID,
                 cwd: event.cwd,
                 startedAt: now(),
-                codexPID: context.pid
+                codexPID: context.pid,
+                codexExecutablePath: context.executablePath
             )
             state.revision &+= 1
         }
@@ -199,6 +219,7 @@ public final class HookProcessor {
                 cwd: event.cwd ?? existing.cwd,
                 startedAt: existing.startedAt,
                 codexPID: existing.codexPID,
+                codexExecutablePath: existing.codexExecutablePath,
                 progress: .waitingForPermission
             )
             state.revision &+= 1
@@ -228,6 +249,8 @@ public final class HookProcessor {
                 cwd: event.cwd ?? existing.cwd,
                 startedAt: now(),
                 codexPID: context?.pid ?? existing.codexPID,
+                codexExecutablePath:
+                    context?.executablePath ?? existing.codexExecutablePath,
                 progress: .running
             )
             state.revision &+= 1
@@ -268,16 +291,51 @@ public final class HookProcessor {
         }
     }
 
-    private func prune(_ state: inout ActivityState) {
+    private struct PruneResult {
+        var changed = false
+        var removedTask = false
+    }
+
+    @discardableResult
+    private func prune(_ state: inout ActivityState) -> PruneResult {
         let currentDate = now()
+        var result = PruneResult()
         for (sessionID, task) in state.tracked {
+            guard task.progress != .interrupted else {
+                continue
+            }
             let expiredWithoutPID = task.codexPID == nil
                 && currentDate.timeIntervalSince(task.startedAt) > maximumBusyAge
             let dead = task.codexPID.map { !processIsAlive($0) } ?? false
-            if expiredWithoutPID || dead {
+            if expiredWithoutPID {
                 state.tracked.removeValue(forKey: sessionID)
+                result.changed = true
+                result.removedTask = true
+                continue
             }
+            guard dead else {
+                continue
+            }
+
+            if completionEvidence(task) == true {
+                state.tracked.removeValue(forKey: sessionID)
+                result.removedTask = true
+            } else {
+                state.tracked[sessionID] = CodexTask(
+                    sessionID: task.sessionID,
+                    turnID: task.turnID,
+                    cwd: task.cwd,
+                    startedAt: task.startedAt,
+                    codexPID: nil,
+                    codexExecutablePath: task.codexExecutablePath,
+                    progress: .interrupted,
+                    trackingSource: task.trackingSource,
+                    interruptedAt: currentDate
+                )
+            }
+            result.changed = true
         }
+        return result
     }
 
     public static func defaultProcessIsAlive(_ pid: Int32) -> Bool {

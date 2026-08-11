@@ -14,6 +14,7 @@ enum HookSetupState: Equatable {
 final class AppModel: ObservableObject {
     @Published private(set) var tasks: [CodexTask] = []
     @Published private(set) var waitingForPermissionTasks: [CodexTask] = []
+    @Published private(set) var interruptedTasks: [CodexTask] = []
     @Published private(set) var settings: BatterySettings
     @Published private(set) var countdown: Int?
     @Published private(set) var hookSetupState: HookSetupState = .checking
@@ -21,6 +22,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var copiedHooksCommand = false
     @Published private(set) var lastError: String?
     @Published private(set) var isPreventingIdleSleep = false
+    @Published private var resumingSessionIDs: Set<String> = []
 
     private let activityStore: ActivityStore
     private let settingsStore: SettingsStore
@@ -51,6 +53,7 @@ final class AppModel: ObservableObject {
         staleTaskPruner = HookProcessor(store: activityStore)
         sessionReconciler = CodexSessionReconciler(store: activityStore)
         settings = (try? settingsStore.read()) ?? BatterySettings()
+        codexExecutableURL = CodexExecutableLocator.locate()
         refresh()
         pollTimer = Timer.scheduledTimer(
             withTimeInterval: 0.5,
@@ -77,16 +80,33 @@ final class AppModel: ObservableObject {
         waitingForPermissionTasks.count
     }
 
-    var trackedTaskCount: Int {
+    var liveTaskCount: Int {
         busyCount + waitingForPermissionCount
+    }
+
+    var interruptedTaskCount: Int {
+        interruptedTasks.count
+    }
+
+    var unfinishedTaskCount: Int {
+        liveTaskCount + interruptedTaskCount
     }
 
     var statusText: String {
         if busyCount == 0 {
             if waitingForPermissionCount > 0 {
+                if interruptedTaskCount > 0 {
+                    return "\(waitingForPermissionCount) 个等待授权 · \(interruptedTaskCount) 个待恢复"
+                }
                 return "\(waitingForPermissionCount) 个 Codex 任务等待授权"
             }
+            if interruptedTaskCount > 0 {
+                return "\(interruptedTaskCount) 个任务未正常结束"
+            }
             return "所有终端任务已空闲"
+        }
+        if interruptedTaskCount > 0 {
+            return "\(busyCount) 个进行中 · \(interruptedTaskCount) 个待恢复"
         }
         if waitingForPermissionCount > 0 {
             return "\(busyCount) 个进行中 · \(waitingForPermissionCount) 个等待授权"
@@ -273,6 +293,101 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func resumeInterruptedTask(_ task: CodexTask) {
+        guard
+            task.progress == .interrupted,
+            !resumingSessionIDs.contains(task.sessionID)
+        else {
+            return
+        }
+        let originalExecutableURL = task.codexExecutablePath.map(
+            URL.init(fileURLWithPath:)
+        )
+        let resumeExecutableURL = originalExecutableURL.flatMap {
+            FileManager.default.isExecutableFile(atPath: $0.path) ? $0 : nil
+        } ?? codexExecutableURL ?? CodexExecutableLocator.locate()
+        guard let resumeExecutableURL else {
+            lastError = "未找到 Codex 命令行程序，无法恢复任务"
+            return
+        }
+
+        let workingDirectory = task.cwd.map(URL.init(fileURLWithPath:))
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        var isDirectory: ObjCBool = false
+        guard
+            FileManager.default.fileExists(
+                atPath: workingDirectory.path,
+                isDirectory: &isDirectory
+            ),
+            isDirectory.boolValue
+        else {
+            lastError = "原工作目录已不存在：\(workingDirectory.path)"
+            return
+        }
+
+        do {
+            let directory = TermiNapPaths.applicationSupportDirectory()
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            let launcherURL = directory.appendingPathComponent(
+                "恢复 Codex-\(task.sessionID.prefix(8)).command"
+            )
+            let prompt = "TermiNap 检测到上次 Codex 进程未正常结束。请先检查当前工作区和已经执行的操作，再继续完成上次未完成的任务。"
+            let script = """
+            #!/bin/zsh
+            clear
+            echo "TermiNap 正在恢复未正常结束的 Codex 任务…"
+            echo
+            exec \(shellQuote(resumeExecutableURL.path)) \
+                -C \(shellQuote(workingDirectory.path)) \
+                resume \(shellQuote(task.sessionID)) \
+                \(shellQuote(prompt))
+            """
+            try Data(script.utf8).write(to: launcherURL, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: launcherURL.path
+            )
+            guard NSWorkspace.shared.open(launcherURL) else {
+                throw CocoaError(.executableNotLoadable)
+            }
+            resumingSessionIDs.insert(task.sessionID)
+            lastError = nil
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(15))
+                self?.resumingSessionIDs.remove(task.sessionID)
+            }
+        } catch {
+            resumingSessionIDs.remove(task.sessionID)
+            lastError = error.localizedDescription
+        }
+    }
+
+    func stopTrackingInterruptedTask(_ task: CodexTask) {
+        do {
+            try activityStore.mutate { state in
+                guard
+                    state.tracked[task.sessionID]?.progress == .interrupted
+                else {
+                    return
+                }
+                state.tracked.removeValue(forKey: task.sessionID)
+                state.lastCompletedAt = Date()
+                state.revision &+= 1
+            }
+            resumingSessionIDs.remove(task.sessionID)
+            refresh()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func isResuming(_ task: CodexTask) -> Bool {
+        resumingSessionIDs.contains(task.sessionID)
+    }
+
     func toggleAutomation() {
         var next = settings
         next.enabled.toggle()
@@ -369,8 +484,15 @@ final class AppModel: ObservableObject {
             waitingForPermissionTasks = state.waitingForPermission.values.sorted {
                 $0.startedAt < $1.startedAt
             }
+            interruptedTasks = state.interrupted.values.sorted {
+                ($0.interruptedAt ?? $0.startedAt)
+                    < ($1.interruptedAt ?? $1.startedAt)
+            }
+            resumingSessionIDs.formIntersection(
+                Set(interruptedTasks.map(\.sessionID))
+            )
             let decision = decisionEngine.observe(
-                trackedTaskCount: trackedTaskCount,
+                unfinishedTaskCount: unfinishedTaskCount,
                 automationEnabled: settings.enabled
             )
             switch decision {
@@ -406,7 +528,7 @@ final class AppModel: ObservableObject {
 
     private func armCountdown() {
         clearCountdownState()
-        guard settings.enabled, trackedTaskCount == 0 else {
+        guard settings.enabled, unfinishedTaskCount == 0 else {
             synchronizeWakeGuard()
             return
         }
@@ -458,7 +580,7 @@ final class AppModel: ObservableObject {
 
         clearCountdownState()
         synchronizeWakeGuard()
-        guard settings.enabled, trackedTaskCount == 0 else {
+        guard settings.enabled, unfinishedTaskCount == 0 else {
             return
         }
 
@@ -482,7 +604,7 @@ final class AppModel: ObservableObject {
     @discardableResult
     private func synchronizeWakeGuard() -> Bool {
         let shouldPrevent = WakeGuardPolicy.shouldPreventIdleSleep(
-            trackedTaskCount: trackedTaskCount,
+            liveTaskCount: liveTaskCount,
             automationEnabled: settings.enabled,
             countdownActive: countdown != nil
         )

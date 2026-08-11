@@ -11,6 +11,7 @@ All notable changes to TermiNap will be documented in this file.
 - In-app wake-guard status and clearer night-shift automation language.
 - Fail-safe assertion cleanup on disabled automation, state errors, stale sessions, and process exit.
 - Explicit running and waiting-for-permission task states.
+- Recoverable interrupted-task state with one-click Codex session resume.
 - Five-event Codex lifecycle coverage, including `PermissionRequest` and `PostToolUse`.
 - Product state and power-decision reference documentation.
 
@@ -27,6 +28,7 @@ All notable changes to TermiNap will be documented in this file.
 - Migrate the legacy 15- or 30-second completion grace period to five minutes.
 - Recheck persisted task state when the countdown reaches zero to avoid a polling race with a newly resumed task.
 - Keep a live Codex process tracked beyond the 24-hour stale-state fallback.
+- Distinguish a missing Codex process from normal completion, suppress the five-minute power countdown, and release the idle-sleep assertion while recovery is pending.
 
 ### Verified
 

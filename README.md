@@ -18,6 +18,7 @@ TermiNap is designed around the agent lifecycle:
 - Multiple Codex terminals are tracked together.
 - While at least one tracked task is active, macOS stays awake but the display may turn off normally.
 - A Codex permission wait is shown as paused progress, but remains unfinished and keeps the system awake.
+- If a Codex process disappears without a completion event, the task becomes recoverable instead of being treated as finished.
 - After every tracked task has truly finished, a cancelable five-minute countdown starts.
 - A new task cancels the pending power action.
 - The night-shift switch is consumed after one completed power action, so it cannot trigger again after wake or restart.
@@ -27,11 +28,12 @@ TermiNap is designed around the agent lifecycle:
 
 - Tracks terminal Codex running, permission-wait, resume, and completion states through five lifecycle hooks.
 - Recovers unfinished turns from live terminal Codex sessions that were already open when TermiNap launched.
+- Detects tasks interrupted by a terminal or Codex process exit, suppresses the completion countdown, and offers one-click resume in a new terminal.
 - Ignores Codex/ChatGPT desktop sessions without a TTY.
 - Shows up to eight active tasks, with a `+N` overflow indicator.
 - Uses a process-scoped macOS assertion to prevent only user-idle system sleep while agents work.
-- Keeps the assertion while tasks remain and through the five-minute completion countdown, then rechecks task state and releases it before the selected power action.
-- Releases the assertion on disable, state-read failure, stale sessions, normal exit, and process termination.
+- Keeps the assertion while a process is running or waiting for permission and through the five-minute completion countdown, then rechecks task state and releases it before the selected power action.
+- Releases the assertion after an abnormal process exit while retaining the interrupted session for recovery.
 - Supports display sleep, system sleep, and shutdown.
 - Requires an explicit confirmation before enabling shutdown.
 - Installs and merges user-level hooks without removing unrelated hooks.
@@ -74,7 +76,7 @@ TermiNap checks the trust state through the Codex app-server and switches to the
 
 - No account is required.
 - No prompts, source code, project contents, or terminal output are collected.
-- Existing-session recovery reads only the session ID, working directory, PID, and lifecycle event fields from rollout files currently held by TTY Codex processes.
+- Existing-session and crash recovery read only the session ID, working directory, PID, executable path, and lifecycle event fields needed to classify and resume a terminal Codex session.
 - State is stored under `~/Library/Application Support/TermiNap/`.
 - Power automation is off by default.
 - Each enablement is one-shot and is persisted as disabled before display sleep, system sleep, or shutdown is requested.

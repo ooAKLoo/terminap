@@ -54,6 +54,7 @@ if CommandLine.arguments.dropFirst().first == "--render-preview" {
         ? "expanded"
         : CommandLine.arguments[5]
     let expanded = previewMode != "collapsed"
+    let interruptedCount = previewMode == "interrupted" ? 1 : 0
     let renderedHeight: CGFloat? =
         previewMode == "collapsing"
         ? BatteryView.collapsedHeight
@@ -68,6 +69,7 @@ if CommandLine.arguments.dropFirst().first == "--render-preview" {
             try renderPreview(
                 to: outputURL,
                 activeCount: max(activeCount, 0),
+                interruptedCount: interruptedCount,
                 enabled: enabled,
                 expanded: expanded,
                 resizeAnchor: resizeAnchor,

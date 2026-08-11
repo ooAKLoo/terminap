@@ -151,6 +151,108 @@ final class TermiNapCoreTests: XCTestCase {
         XCTAssertNotNil(try store.read().busy["a"])
     }
 
+    func testDeadProcessWithoutCompletionBecomesInterrupted() throws {
+        let store = ActivityStore(baseDirectory: temporaryDirectory())
+        let detectedAt = Date(timeIntervalSince1970: 2_000)
+        let processor = HookProcessor(
+            store: store,
+            now: { detectedAt },
+            terminalContext: {
+                CodexProcessContext(
+                    pid: 1234,
+                    tty: "ttys001",
+                    executablePath: "/opt/bin/codex"
+                )
+            },
+            processIsAlive: { _ in false },
+            completionEvidence: { _ in false }
+        )
+
+        try processor.handle(
+            .start,
+            event: HookEvent(
+                sessionID: "a",
+                turnID: "turn-a",
+                cwd: "/a"
+            )
+        )
+        try processor.pruneStaleTasks()
+
+        let state = try store.read()
+        XCTAssertTrue(state.busy.isEmpty)
+        XCTAssertTrue(state.waitingForPermission.isEmpty)
+        XCTAssertEqual(state.interrupted["a"]?.progress, .interrupted)
+        XCTAssertNil(state.interrupted["a"]?.codexPID)
+        XCTAssertEqual(
+            state.interrupted["a"]?.codexExecutablePath,
+            "/opt/bin/codex"
+        )
+        XCTAssertEqual(state.interrupted["a"]?.interruptedAt, detectedAt)
+        XCTAssertNil(state.lastCompletedAt)
+    }
+
+    func testDeadProcessWithCompletionEvidenceIsRemoved() throws {
+        let store = ActivityStore(baseDirectory: temporaryDirectory())
+        let completedAt = Date(timeIntervalSince1970: 2_000)
+        let processor = HookProcessor(
+            store: store,
+            now: { completedAt },
+            terminalContext: {
+                CodexProcessContext(pid: 1234, tty: "ttys001")
+            },
+            processIsAlive: { _ in false },
+            completionEvidence: { _ in true }
+        )
+
+        try processor.handle(
+            .start,
+            event: HookEvent(
+                sessionID: "a",
+                turnID: "turn-a",
+                cwd: "/a"
+            )
+        )
+        try processor.pruneStaleTasks()
+
+        let state = try store.read()
+        XCTAssertTrue(state.tracked.isEmpty)
+        XCTAssertEqual(state.lastCompletedAt, completedAt)
+    }
+
+    func testInterruptedTaskIsNotExpiredOrReclassified() throws {
+        let store = ActivityStore(baseDirectory: temporaryDirectory())
+        var now = Date(timeIntervalSince1970: 2_000)
+        var evidenceChecks = 0
+        let processor = HookProcessor(
+            store: store,
+            now: { now },
+            terminalContext: {
+                CodexProcessContext(pid: 1234, tty: "ttys001")
+            },
+            processIsAlive: { _ in false },
+            completionEvidence: { _ in
+                evidenceChecks += 1
+                return false
+            },
+            maximumBusyAge: 60
+        )
+
+        try processor.handle(
+            .start,
+            event: HookEvent(
+                sessionID: "a",
+                turnID: "turn-a",
+                cwd: "/a"
+            )
+        )
+        try processor.pruneStaleTasks()
+        now = now.addingTimeInterval(3_600)
+        try processor.pruneStaleTasks()
+
+        XCTAssertNotNil(try store.read().interrupted["a"])
+        XCTAssertEqual(evidenceChecks, 1)
+    }
+
     func testDiscoversActiveTurnFromCodexOpenedBeforeApp() throws {
         let sessionsRoot = temporaryDirectory()
         let rolloutURL = sessionsRoot.appendingPathComponent(
@@ -190,6 +292,37 @@ final class TermiNapCoreTests: XCTestCase {
             result.activeTasks["session-before-app"]?.trackingSource,
             .sessionScan
         )
+    }
+
+    func testLifecycleInspectorDistinguishesIncompleteAndCompletedSession() throws {
+        let sessionsRoot = temporaryDirectory()
+        let rolloutURL = sessionsRoot.appendingPathComponent(
+            "rollout-2026-08-11T10-00-00-session-a.jsonl"
+        )
+        let activeRollout = """
+        {"type":"session_meta","payload":{"id":"session-a","cwd":"/project","originator":"codex-tui","source":"cli"}}
+        {"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-a","started_at":1234}}
+        """
+        try Data(activeRollout.utf8).write(to: rolloutURL)
+        let inspector = CodexSessionLifecycleInspector(
+            sessionsRoot: sessionsRoot
+        )
+        let task = CodexTask(
+            sessionID: "session-a",
+            turnID: "turn-a",
+            cwd: "/project",
+            codexPID: 123
+        )
+
+        XCTAssertEqual(inspector.hasCompletionEvent(for: task), false)
+
+        let completedRollout = activeRollout + """
+
+        {"type":"event_msg","payload":{"type":"task_complete"}}
+        """
+        try Data(completedRollout.utf8).write(to: rolloutURL)
+
+        XCTAssertEqual(inspector.hasCompletionEvent(for: task), true)
     }
 
     func testSessionScanIgnoresSubagentsOwnedByTerminalCodexProcess() throws {
@@ -314,55 +447,130 @@ final class TermiNapCoreTests: XCTestCase {
         XCTAssertEqual(try store.read().tracked["a"], hookTask)
     }
 
-    func testIdleDecisionOnlyArmsOnTrackedTasksToZeroTransition() {
+    func testSessionScanDoesNotDiscardInterruptedTask() throws {
+        let store = ActivityStore(baseDirectory: temporaryDirectory())
+        let interruptedTask = CodexTask(
+            sessionID: "a",
+            turnID: "turn-a",
+            cwd: "/a",
+            startedAt: Date(timeIntervalSince1970: 100),
+            codexPID: nil,
+            progress: .interrupted,
+            trackingSource: .sessionScan,
+            interruptedAt: Date(timeIntervalSince1970: 120)
+        )
+        try store.mutate { state in
+            state.tracked["a"] = interruptedTask
+        }
+        let reconciler = CodexSessionReconciler(
+            store: store,
+            scan: { CodexSessionScanResult() }
+        )
+
+        try reconciler.reconcile()
+
+        XCTAssertEqual(try store.read().interrupted["a"], interruptedTask)
+    }
+
+    func testSessionScanRestoresInterruptedTaskWhenProcessReturns() throws {
+        let store = ActivityStore(baseDirectory: temporaryDirectory())
+        let interruptedTask = CodexTask(
+            sessionID: "a",
+            turnID: "turn-a",
+            cwd: "/a",
+            startedAt: Date(timeIntervalSince1970: 100),
+            codexPID: nil,
+            progress: .interrupted,
+            interruptedAt: Date(timeIntervalSince1970: 120)
+        )
+        try store.mutate { state in
+            state.tracked["a"] = interruptedTask
+        }
+        let resumedTask = CodexTask(
+            sessionID: "a",
+            turnID: "turn-a",
+            cwd: "/a",
+            startedAt: Date(timeIntervalSince1970: 130),
+            codexPID: 456,
+            trackingSource: .sessionScan
+        )
+        let reconciler = CodexSessionReconciler(
+            store: store,
+            scan: {
+                CodexSessionScanResult(
+                    observedSessionIDs: ["a"],
+                    activeTasks: ["a": resumedTask]
+                )
+            }
+        )
+
+        try reconciler.reconcile()
+
+        XCTAssertEqual(try store.read().busy["a"], resumedTask)
+        XCTAssertTrue(try store.read().interrupted.isEmpty)
+    }
+
+    func testIdleDecisionOnlyArmsOnUnfinishedTasksToZeroTransition() {
         var engine = IdleDecisionEngine()
         XCTAssertEqual(
-            engine.observe(trackedTaskCount: 0, automationEnabled: true),
+            engine.observe(unfinishedTaskCount: 0, automationEnabled: true),
             .none
         )
         XCTAssertEqual(
-            engine.observe(trackedTaskCount: 2, automationEnabled: true),
+            engine.observe(unfinishedTaskCount: 2, automationEnabled: true),
             .cancel
         )
         XCTAssertEqual(
-            engine.observe(trackedTaskCount: 1, automationEnabled: true),
+            engine.observe(unfinishedTaskCount: 1, automationEnabled: true),
             .cancel
         )
         XCTAssertEqual(
-            engine.observe(trackedTaskCount: 0, automationEnabled: true),
+            engine.observe(unfinishedTaskCount: 0, automationEnabled: true),
             .arm
         )
         XCTAssertEqual(
-            engine.observe(trackedTaskCount: 0, automationEnabled: true),
+            engine.observe(unfinishedTaskCount: 0, automationEnabled: true),
             .none
+        )
+    }
+
+    func testIdleDecisionDoesNotArmWhenTaskBecomesInterrupted() {
+        var engine = IdleDecisionEngine()
+        XCTAssertEqual(
+            engine.observe(unfinishedTaskCount: 1, automationEnabled: true),
+            .none
+        )
+        XCTAssertEqual(
+            engine.observe(unfinishedTaskCount: 1, automationEnabled: true),
+            .cancel
         )
     }
 
     func testWakeGuardPolicyCoversWorkAndCompletionCountdown() {
         XCTAssertTrue(
             WakeGuardPolicy.shouldPreventIdleSleep(
-                trackedTaskCount: 2,
+                liveTaskCount: 2,
                 automationEnabled: true,
                 countdownActive: false
             )
         )
         XCTAssertTrue(
             WakeGuardPolicy.shouldPreventIdleSleep(
-                trackedTaskCount: 0,
+                liveTaskCount: 0,
                 automationEnabled: true,
                 countdownActive: true
             )
         )
         XCTAssertFalse(
             WakeGuardPolicy.shouldPreventIdleSleep(
-                trackedTaskCount: 2,
+                liveTaskCount: 2,
                 automationEnabled: false,
                 countdownActive: true
             )
         )
         XCTAssertFalse(
             WakeGuardPolicy.shouldPreventIdleSleep(
-                trackedTaskCount: 0,
+                liveTaskCount: 0,
                 automationEnabled: true,
                 countdownActive: false
             )
@@ -608,6 +816,8 @@ final class TermiNapCoreTests: XCTestCase {
 
         XCTAssertEqual(task.progress, .running)
         XCTAssertEqual(task.trackingSource, .hook)
+        XCTAssertNil(task.codexExecutablePath)
+        XCTAssertNil(task.interruptedAt)
     }
 
     func testPanelPlacementStaysInsideDisplayWithNegativeCoordinates() {

@@ -93,6 +93,7 @@ public struct BatterySettings: Codable, Equatable {
 public enum CodexTaskProgress: String, Codable, Equatable {
     case running
     case waitingForPermission
+    case interrupted
 }
 
 public enum CodexTaskTrackingSource: String, Codable, Equatable {
@@ -106,8 +107,10 @@ public struct CodexTask: Codable, Equatable, Identifiable {
     public let cwd: String?
     public let startedAt: Date
     public let codexPID: Int32?
+    public let codexExecutablePath: String?
     public let progress: CodexTaskProgress
     public let trackingSource: CodexTaskTrackingSource
+    public let interruptedAt: Date?
 
     public var id: String { sessionID }
 
@@ -117,16 +120,20 @@ public struct CodexTask: Codable, Equatable, Identifiable {
         cwd: String?,
         startedAt: Date = Date(),
         codexPID: Int32? = nil,
+        codexExecutablePath: String? = nil,
         progress: CodexTaskProgress = .running,
-        trackingSource: CodexTaskTrackingSource = .hook
+        trackingSource: CodexTaskTrackingSource = .hook,
+        interruptedAt: Date? = nil
     ) {
         self.sessionID = sessionID
         self.turnID = turnID
         self.cwd = cwd
         self.startedAt = startedAt
         self.codexPID = codexPID
+        self.codexExecutablePath = codexExecutablePath
         self.progress = progress
         self.trackingSource = trackingSource
+        self.interruptedAt = interruptedAt
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -135,8 +142,10 @@ public struct CodexTask: Codable, Equatable, Identifiable {
         case cwd
         case startedAt
         case codexPID
+        case codexExecutablePath
         case progress
         case trackingSource
+        case interruptedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -146,6 +155,10 @@ public struct CodexTask: Codable, Equatable, Identifiable {
         cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
         startedAt = try container.decode(Date.self, forKey: .startedAt)
         codexPID = try container.decodeIfPresent(Int32.self, forKey: .codexPID)
+        codexExecutablePath = try container.decodeIfPresent(
+            String.self,
+            forKey: .codexExecutablePath
+        )
         progress = try container.decodeIfPresent(
             CodexTaskProgress.self,
             forKey: .progress
@@ -154,6 +167,10 @@ public struct CodexTask: Codable, Equatable, Identifiable {
             CodexTaskTrackingSource.self,
             forKey: .trackingSource
         ) ?? .hook
+        interruptedAt = try container.decodeIfPresent(
+            Date.self,
+            forKey: .interruptedAt
+        )
     }
 }
 
@@ -169,6 +186,10 @@ public struct ActivityState: Codable, Equatable {
 
     public var waitingForPermission: [String: CodexTask] {
         tracked.filter { $0.value.progress == .waitingForPermission }
+    }
+
+    public var interrupted: [String: CodexTask] {
+        tracked.filter { $0.value.progress == .interrupted }
     }
 
     public init(
@@ -224,26 +245,26 @@ public enum IdleDecision: Equatable {
 }
 
 public struct IdleDecisionEngine {
-    private var previousTrackedTaskCount: Int?
+    private var previousUnfinishedTaskCount: Int?
 
     public init() {}
 
     public mutating func observe(
-        trackedTaskCount: Int,
+        unfinishedTaskCount: Int,
         automationEnabled: Bool
     ) -> IdleDecision {
-        defer { previousTrackedTaskCount = trackedTaskCount }
+        defer { previousUnfinishedTaskCount = unfinishedTaskCount }
 
-        guard let previousTrackedTaskCount else {
+        guard let previousUnfinishedTaskCount else {
             return .none
         }
 
-        if trackedTaskCount > 0 {
+        if unfinishedTaskCount > 0 {
             return .cancel
         }
 
-        if previousTrackedTaskCount > 0,
-            trackedTaskCount == 0,
+        if previousUnfinishedTaskCount > 0,
+            unfinishedTaskCount == 0,
             automationEnabled
         {
             return .arm

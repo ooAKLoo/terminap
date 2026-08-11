@@ -32,20 +32,20 @@ struct CodexSessionScanResult: Equatable {
     }
 }
 
+private enum CodexSessionLifecycleState {
+    case active(turnID: String, startedAt: Date)
+    case completed
+}
+
 final class TerminalCodexSessionScanner: @unchecked Sendable {
     private struct SessionMetadata {
         let sessionID: String
         let cwd: String?
     }
 
-    private enum LifecycleState {
-        case active(turnID: String, startedAt: Date)
-        case completed
-    }
-
     private struct CachedLifecycle {
         let fileSize: UInt64
-        let state: LifecycleState?
+        let state: CodexSessionLifecycleState?
     }
 
     private let sessionsRoot: URL
@@ -255,7 +255,9 @@ final class TerminalCodexSessionScanner: @unchecked Sendable {
         )
     }
 
-    private func lifecycleState(for url: URL) throws -> LifecycleState? {
+    private func lifecycleState(
+        for url: URL
+    ) throws -> CodexSessionLifecycleState? {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         guard let fileSize = (attributes[.size] as? NSNumber)?.uint64Value else {
             return nil
@@ -285,11 +287,11 @@ final class TerminalCodexSessionScanner: @unchecked Sendable {
         return latest
     }
 
-    private static func readLatestLifecycle(
+    fileprivate static func readLatestLifecycle(
         from url: URL,
         fileSize: UInt64,
         lowerBound: UInt64
-    ) throws -> LifecycleState? {
+    ) throws -> CodexSessionLifecycleState? {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         guard fileSize > 0 else {
@@ -334,7 +336,9 @@ final class TerminalCodexSessionScanner: @unchecked Sendable {
         return nil
     }
 
-    private static func lifecycle(from line: Data) -> LifecycleState? {
+    private static func lifecycle(
+        from line: Data
+    ) -> CodexSessionLifecycleState? {
         let taskStarted = Data("\"task_started\"".utf8)
         let taskComplete = Data("\"task_complete\"".utf8)
         let turnAborted = Data("\"turn_aborted\"".utf8)
@@ -386,6 +390,105 @@ final class TerminalCodexSessionScanner: @unchecked Sendable {
             terminationStatus: process.terminationStatus
         )
     }
+
+    fileprivate static func sessionID(from url: URL) throws -> String? {
+        try readSessionMetadata(from: url)?.sessionID
+    }
+}
+
+final class CodexSessionLifecycleInspector {
+    private let sessionsRoot: URL
+    private let fileManager: FileManager
+
+    convenience init() {
+        let sessionsRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex", isDirectory: true)
+            .appendingPathComponent("sessions", isDirectory: true)
+        self.init(sessionsRoot: sessionsRoot)
+    }
+
+    init(
+        sessionsRoot: URL,
+        fileManager: FileManager = .default
+    ) {
+        self.sessionsRoot = sessionsRoot.standardizedFileURL
+        self.fileManager = fileManager
+    }
+
+    func hasCompletionEvent(for task: CodexTask) -> Bool? {
+        guard let rolloutURL = rolloutURL(for: task.sessionID) else {
+            return nil
+        }
+
+        do {
+            let attributes = try fileManager.attributesOfItem(
+                atPath: rolloutURL.path
+            )
+            guard
+                let fileSize = (attributes[.size] as? NSNumber)?.uint64Value,
+                let lifecycle = try TerminalCodexSessionScanner.readLatestLifecycle(
+                    from: rolloutURL,
+                    fileSize: fileSize,
+                    lowerBound: 0
+                )
+            else {
+                return nil
+            }
+            if case .completed = lifecycle {
+                return true
+            }
+            return false
+        } catch {
+            return nil
+        }
+    }
+
+    private func rolloutURL(for sessionID: String) -> URL? {
+        guard
+            let enumerator = fileManager.enumerator(
+                at: sessionsRoot,
+                includingPropertiesForKeys: [
+                    .isRegularFileKey,
+                    .contentModificationDateKey,
+                ],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            return nil
+        }
+
+        var candidates: [(url: URL, modifiedAt: Date)] = []
+        while let url = enumerator.nextObject() as? URL {
+            guard
+                url.pathExtension == "jsonl",
+                url.lastPathComponent.contains(sessionID),
+                let values = try? url.resourceValues(forKeys: [
+                    .isRegularFileKey,
+                    .contentModificationDateKey,
+                ]),
+                values.isRegularFile == true
+            else {
+                continue
+            }
+            candidates.append(
+                (url, values.contentModificationDate ?? .distantPast)
+            )
+        }
+
+        for candidate in candidates.sorted(by: {
+            $0.modifiedAt > $1.modifiedAt
+        }) {
+            guard
+                let candidateSessionID = try? TerminalCodexSessionScanner
+                    .sessionID(from: candidate.url),
+                candidateSessionID == sessionID
+            else {
+                continue
+            }
+            return candidate.url
+        }
+        return nil
+    }
 }
 
 public final class CodexSessionReconciler: @unchecked Sendable {
@@ -420,6 +523,7 @@ public final class CodexSessionReconciler: @unchecked Sendable {
             for (sessionID, task) in state.tracked {
                 let explicitlyCompleted = result.completedSessionIDs.contains(sessionID)
                 let scannerLostSession = task.trackingSource == .sessionScan
+                    && task.progress != .interrupted
                     && !result.observedSessionIDs.contains(sessionID)
                 if explicitlyCompleted || scannerLostSession {
                     state.tracked.removeValue(forKey: sessionID)
@@ -429,14 +533,29 @@ public final class CodexSessionReconciler: @unchecked Sendable {
             }
 
             for (sessionID, discovered) in result.activeTasks {
-                if let existing = state.tracked[sessionID],
+                let existing = state.tracked[sessionID]
+                if let existing,
                    existing.turnID == discovered.turnID,
-                   existing.trackingSource == .hook
+                   existing.trackingSource == .hook,
+                   existing.progress != .interrupted
                 {
                     continue
                 }
-                if state.tracked[sessionID] != discovered {
-                    state.tracked[sessionID] = discovered
+                let reconciled = CodexTask(
+                    sessionID: discovered.sessionID,
+                    turnID: discovered.turnID,
+                    cwd: discovered.cwd,
+                    startedAt: discovered.startedAt,
+                    codexPID: discovered.codexPID,
+                    codexExecutablePath:
+                        discovered.codexExecutablePath
+                        ?? existing?.codexExecutablePath,
+                    progress: discovered.progress,
+                    trackingSource: discovered.trackingSource,
+                    interruptedAt: discovered.interruptedAt
+                )
+                if existing != reconciled {
+                    state.tracked[sessionID] = reconciled
                     changed = true
                 }
             }

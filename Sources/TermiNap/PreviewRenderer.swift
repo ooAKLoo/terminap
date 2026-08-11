@@ -6,6 +6,7 @@ import SwiftUI
 func renderPreview(
     to outputURL: URL,
     activeCount: Int,
+    interruptedCount: Int = 0,
     enabled: Bool,
     expanded: Bool = true,
     resizeAnchor: PanelResizeAnchor = .topEdge,
@@ -29,7 +30,19 @@ func renderPreview(
                 codexPID: nil
             )
         }
-        state.revision = UInt64(activeCount)
+        for index in 0..<interruptedCount {
+            let sessionID = "preview-interrupted-\(index)"
+            state.tracked[sessionID] = CodexTask(
+                sessionID: sessionID,
+                turnID: "turn-interrupted-\(index)",
+                cwd: "/Users/demo/terminap",
+                startedAt: Date().addingTimeInterval(-240),
+                codexPID: nil,
+                progress: .interrupted,
+                interruptedAt: Date().addingTimeInterval(-12)
+            )
+        }
+        state.revision = UInt64(activeCount + interruptedCount)
     }
 
     let settingsStore = SettingsStore(baseDirectory: previewDirectory)
@@ -64,7 +77,11 @@ func renderPreview(
                 renderedHeight
                 ?? (
                     expanded
-                    ? BatteryView.dashboardExpandedHeight
+                    ? (
+                        interruptedCount > 0
+                            ? BatteryView.recoveryExpandedHeight
+                            : BatteryView.dashboardExpandedHeight
+                    )
                     : BatteryView.collapsedHeight
                 )
         )

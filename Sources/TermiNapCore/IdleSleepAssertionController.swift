@@ -87,10 +87,10 @@ public final class IdleSleepAssertionController {
 
 public enum WakeGuardPolicy {
     public static func shouldPreventIdleSleep(
-        trackedTaskCount: Int,
+        liveTaskCount: Int,
         automationEnabled: Bool,
         countdownActive: Bool
     ) -> Bool {
-        automationEnabled && (trackedTaskCount > 0 || countdownActive)
+        automationEnabled && (liveTaskCount > 0 || countdownActive)
     }
 }
