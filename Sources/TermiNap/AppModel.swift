@@ -334,16 +334,11 @@ final class AppModel: ObservableObject {
             let launcherURL = directory.appendingPathComponent(
                 "恢复 Codex-\(task.sessionID.prefix(8)).command"
             )
-            let prompt = "TermiNap 检测到上次 Codex 进程未正常结束。请先检查当前工作区和已经执行的操作，再继续完成上次未完成的任务。"
             let script = """
             #!/bin/zsh
-            clear
-            echo "TermiNap 正在恢复未正常结束的 Codex 任务…"
-            echo
             exec \(shellQuote(resumeExecutableURL.path)) \
                 -C \(shellQuote(workingDirectory.path)) \
-                resume \(shellQuote(task.sessionID)) \
-                \(shellQuote(prompt))
+                resume \(shellQuote(task.sessionID))
             """
             try Data(script.utf8).write(to: launcherURL, options: .atomic)
             try FileManager.default.setAttributes(
